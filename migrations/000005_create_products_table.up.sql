@@ -1,0 +1,23 @@
+CREATE TABLE products (
+    id VARCHAR(36) NOT NULL,
+    sku VARCHAR(50) NOT NULL,
+    name VARCHAR(200) NOT NULL,
+    name_id VARCHAR(200) NOT NULL DEFAULT '',
+    category_id VARCHAR(36) NOT NULL,
+    purchase_price DECIMAL(15,2) NOT NULL DEFAULT 0,
+    selling_price DECIMAL(15,2) NOT NULL DEFAULT 0,
+    qty_per_box INT NOT NULL DEFAULT 1,
+    stock INT NOT NULL DEFAULT 0,
+    unit VARCHAR(20) NOT NULL DEFAULT 'pcs',
+    image TEXT NULL,
+    min_stock INT NOT NULL DEFAULT 0,
+    is_active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_products_sku (sku),
+    KEY idx_products_category_id (category_id),
+    KEY idx_products_deleted_at (deleted_at),
+    CONSTRAINT fk_products_category FOREIGN KEY (category_id) REFERENCES categories(id)
+);

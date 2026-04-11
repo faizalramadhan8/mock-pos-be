@@ -1,0 +1,41 @@
+CREATE TABLE orders (
+    id VARCHAR(36) NOT NULL,
+    subtotal DECIMAL(15,2) NOT NULL DEFAULT 0,
+    ppn_rate DECIMAL(5,2) NOT NULL DEFAULT 11,
+    ppn DECIMAL(15,2) NOT NULL DEFAULT 0,
+    total DECIMAL(15,2) NOT NULL DEFAULT 0,
+    payment VARCHAR(20) NOT NULL DEFAULT 'cash',
+    status VARCHAR(20) NOT NULL DEFAULT 'completed',
+    customer VARCHAR(200) NULL,
+    payment_proof TEXT NULL,
+    order_discount_type VARCHAR(20) NULL,
+    order_discount_value DECIMAL(15,2) NULL DEFAULT 0,
+    order_discount DECIMAL(15,2) NULL DEFAULT 0,
+    created_by VARCHAR(36) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP NULL,
+    PRIMARY KEY (id),
+    KEY idx_orders_status (status),
+    KEY idx_orders_created_at (created_at),
+    KEY idx_orders_created_by (created_by),
+    KEY idx_orders_deleted_at (deleted_at)
+);
+
+CREATE TABLE order_items (
+    id VARCHAR(36) NOT NULL,
+    order_id VARCHAR(36) NOT NULL,
+    product_id VARCHAR(36) NOT NULL,
+    name VARCHAR(200) NOT NULL,
+    quantity INT NOT NULL DEFAULT 1,
+    unit_type VARCHAR(20) NOT NULL DEFAULT 'individual',
+    unit_price DECIMAL(15,2) NOT NULL DEFAULT 0,
+    discount_type VARCHAR(20) NULL,
+    discount_value DECIMAL(15,2) NULL DEFAULT 0,
+    discount_amount DECIMAL(15,2) NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    KEY idx_order_items_order_id (order_id),
+    KEY idx_order_items_product_id (product_id),
+    CONSTRAINT fk_order_items_order FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+);

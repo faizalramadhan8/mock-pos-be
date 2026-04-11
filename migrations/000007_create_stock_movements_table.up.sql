@@ -1,0 +1,23 @@
+CREATE TABLE stock_movements (
+    id VARCHAR(36) NOT NULL,
+    product_id VARCHAR(36) NOT NULL,
+    type VARCHAR(10) NOT NULL,
+    quantity INT NOT NULL DEFAULT 0,
+    unit_type VARCHAR(20) NOT NULL DEFAULT 'individual',
+    unit_price DECIMAL(15,2) NOT NULL DEFAULT 0,
+    note TEXT NULL,
+    expiry_date DATE NULL,
+    supplier_id VARCHAR(36) NULL,
+    payment_terms VARCHAR(20) NULL,
+    due_date DATE NULL,
+    payment_status VARCHAR(20) NULL DEFAULT 'paid',
+    created_by VARCHAR(36) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    KEY idx_stock_movements_product_id (product_id),
+    KEY idx_stock_movements_type (type),
+    KEY idx_stock_movements_supplier_id (supplier_id),
+    CONSTRAINT fk_stock_movements_product FOREIGN KEY (product_id) REFERENCES products(id),
+    CONSTRAINT fk_stock_movements_supplier FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+);

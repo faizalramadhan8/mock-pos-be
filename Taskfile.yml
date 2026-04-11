@@ -1,0 +1,26 @@
+version: "3"
+
+dotenv: [".env"]
+
+tasks:
+  create_migration:
+    desc: Create table migration
+    cmds:
+      - echo 'Creating migration...'
+      - migrate create -ext sql -dir migrations -seq {{.CLI_ARGS}}
+      - echo 'Create table migration completed.'
+    silent: true
+
+  migrate_up:
+    desc: Run database migrations up
+    cmds:
+      - echo 'Running migrations up...'
+      - migrate -path ./migrations -database "mysql://${MYSQL_USER}:${MYSQL_PASSWORD}@tcp(${MYSQL_HOST}:${MYSQL_PORT})/${MYSQL_DB}" -verbose up
+      - echo 'Migration up completed.'
+
+  migrate_down:
+    desc: Run database migrations down
+    cmds:
+      - echo 'Running migrations down...'
+      - migrate -path ./migrations -database "mysql://${MYSQL_USER}:${MYSQL_PASSWORD}@tcp(${MYSQL_HOST}:${MYSQL_PORT})/${MYSQL_DB}" -verbose down
+      - echo 'Migration down completed.'
