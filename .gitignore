@@ -4,8 +4,6 @@
 *.dll
 *.so
 *.dylib
-backend
-bakeshop-be
 
 # Test binaries & coverage
 *.test
