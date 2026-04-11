@@ -2,6 +2,7 @@ package dto
 
 type CreateProductRequest struct {
 	SKU           string  `json:"sku" validate:"required"`
+	Barcode       string  `json:"barcode"`
 	Name          string  `json:"name" validate:"required"`
 	NameID        string  `json:"name_id"`
 	CategoryID    string  `json:"category_id" validate:"required"`
@@ -26,6 +27,7 @@ type UpdateProductRequest struct {
 	Image         string  `json:"image"`
 	MinStock      int     `json:"min_stock"`
 	SKU           string  `json:"sku"`
+	Barcode       string  `json:"barcode"`
 }
 
 type AdjustStockRequest struct {
@@ -35,6 +37,7 @@ type AdjustStockRequest struct {
 type ProductResponse struct {
 	ID            string           `json:"id"`
 	SKU           string           `json:"sku"`
+	Barcode       string           `json:"barcode,omitempty"`
 	Name          string           `json:"name"`
 	NameID        string           `json:"name_id"`
 	CategoryID    string           `json:"category_id"`

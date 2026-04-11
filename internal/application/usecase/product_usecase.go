@@ -93,6 +93,7 @@ func (s *ProductService) Create(req dto.CreateProductRequest) (*dto.ProductRespo
 	product := &entity.Product{
 		ID:            uuid.New().String(),
 		SKU:           req.SKU,
+		Barcode:       req.Barcode,
 		Name:          req.Name,
 		NameID:        req.NameID,
 		CategoryID:    req.CategoryID,
@@ -159,6 +160,9 @@ func (s *ProductService) Update(id string, req dto.UpdateProductRequest) (*dto.P
 	if req.SKU != "" {
 		product.SKU = req.SKU
 	}
+	if req.Barcode != "" {
+		product.Barcode = req.Barcode
+	}
 	if req.Stock != nil {
 		product.Stock = *req.Stock
 	}
@@ -206,6 +210,7 @@ func (s *ProductService) toResponse(p *entity.Product) dto.ProductResponse {
 	resp := dto.ProductResponse{
 		ID:            p.ID,
 		SKU:           p.SKU,
+		Barcode:       p.Barcode,
 		Name:          p.Name,
 		NameID:        p.NameID,
 		CategoryID:    p.CategoryID,

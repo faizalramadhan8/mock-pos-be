@@ -21,6 +21,7 @@ func (Category) TableName() string { return "categories" }
 type Product struct {
 	ID            string         `gorm:"type:varchar(36);primary_key;not null" json:"id"`
 	SKU           string         `gorm:"type:varchar(50);not null;uniqueIndex" json:"sku"`
+	Barcode       string         `gorm:"type:varchar(50);null;index" json:"barcode,omitempty"`
 	Name          string         `gorm:"type:varchar(200);not null" json:"name"`
 	NameID        string         `gorm:"column:name_id;type:varchar(200);not null" json:"name_id"`
 	CategoryID    string         `gorm:"type:varchar(36);not null" json:"category_id"`
