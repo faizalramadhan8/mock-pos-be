@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -59,6 +60,19 @@ func main() {
 	loc, err := time.LoadLocation("Asia/Jakarta")
 	if err == nil {
 		time.Local = loc
+	}
+
+	// If .env file doesn't exist (e.g. running in Docker with env vars injected
+	// via docker-compose), synthesize one from the process environment so koanf
+	// can parse it with its existing dotenv provider.
+	if _, err := os.Stat(".env"); errors.Is(err, os.ErrNotExist) {
+		var lines []string
+		for _, kv := range os.Environ() {
+			lines = append(lines, kv)
+		}
+		if err := os.WriteFile(".env", []byte(strings.Join(lines, "\n")), 0600); err != nil {
+			log.Fatalf("error writing synthesized .env file: %v", err)
+		}
 	}
 
 	conf := koanf.New(".")
