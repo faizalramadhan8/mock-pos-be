@@ -115,9 +115,11 @@ func (s *MemberService) GetStats(memberID, from, to string) (*dto.MemberStatsRes
 	}
 
 	resp := &dto.MemberStatsResponse{
-		MemberID: memberID,
-		From:     from,
-		To:       to,
+		MemberID:         memberID,
+		From:             from,
+		To:               to,
+		MonthlyBreakdown: []dto.MemberMonthlyBreakdown{},
+		TopProducts:      []dto.MemberTopProduct{},
 	}
 
 	// Range stats
