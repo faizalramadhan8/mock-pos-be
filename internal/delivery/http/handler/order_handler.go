@@ -84,6 +84,15 @@ func (ctrl *OrderController) Cancel(c *fiber.Ctx) error {
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Order cancelled", Body: resp})
 }
 
+func (ctrl *OrderController) ResendWA(c *fiber.Ctx) error {
+	id := c.Params("id")
+	claims := c.Locals("session").(*dto.JWTClaims)
+	if fail := ctrl.Service.ResendReceiptWA(id, claims.ID); fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Receipt sent to WhatsApp"})
+}
+
 func (ctrl *OrderController) GetStats(c *fiber.Ctx) error {
 	revenue, count, fail := ctrl.Service.GetRevenueStats()
 	if fail != nil {

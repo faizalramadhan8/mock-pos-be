@@ -170,6 +170,39 @@ func (s *OrderService) Create(req dto.CreateOrderRequest, userID string) (*dto.O
 	return &resp, nil
 }
 
+// ResendReceiptWA resends the WhatsApp receipt for an existing order.
+// Runs synchronously so the frontend can surface errors back to the user.
+func (s *OrderService) ResendReceiptWA(orderID, userID string) *dto.ApiError {
+	if s.WA == nil || !s.WA.Enabled() {
+		return &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "WhatsApp receipt is disabled"}
+	}
+	order, err := s.Repo.FindByID(orderID)
+	if err != nil {
+		return &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Order not found"}
+	}
+	if order.Member == nil || order.Member.Phone == "" {
+		return &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Order is not linked to a member with a phone number"}
+	}
+
+	storeName := "BakeShop"
+	if settings, sErr := s.SettingsRepo.Get(); sErr == nil && settings != nil && settings.StoreName != "" {
+		storeName = settings.StoreName
+	}
+	cashierName := ""
+	if u, uErr := s.AuthRepo.FindByID(userID); uErr == nil && u != nil {
+		cashierName = u.FullName
+	}
+	text := whatsapp.FormatReceipt(order, storeName, cashierName)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if sendErr := s.WA.SendText(ctx, order.Member.Phone, text); sendErr != nil {
+		s.Log.Warn().Err(sendErr).Str("order_id", order.ID).Msg("WA resend failed")
+		return &dto.ApiError{StatusCode: fiber.ErrBadGateway, Message: "Failed to send WhatsApp receipt: " + sendErr.Error()}
+	}
+	return nil
+}
+
 // sendReceiptWA dispatches a WhatsApp receipt to the member associated with
 // the order. No-op if WA is disabled, order has no member, or member has no
 // valid phone number. Runs in its own goroutine — all errors are logged.

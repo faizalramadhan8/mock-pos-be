@@ -21,6 +21,7 @@ func UseOrderRouter(ctx context.Context, r fiber.Router) {
 	orders.Get("/:id", ctrl.GetByID)
 	orders.Post("/", auth.AllowCashier(), ctrl.Create)
 	orders.Patch("/:id/cancel", auth.AllowAdmins(), ctrl.Cancel)
+	orders.Post("/:id/send-wa", auth.AllowCashier(), ctrl.ResendWA)
 }
 
 func UseInventoryRouter(ctx context.Context, r fiber.Router) {
