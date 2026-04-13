@@ -99,6 +99,7 @@ func (s *ProductService) Create(req dto.CreateProductRequest) (*dto.ProductRespo
 		CategoryID:    req.CategoryID,
 		PurchasePrice: req.PurchasePrice,
 		SellingPrice:  req.SellingPrice,
+		MemberPrice:   req.MemberPrice,
 		QtyPerBox:     req.QtyPerBox,
 		Stock:         req.Stock,
 		Unit:          req.Unit,
@@ -144,6 +145,14 @@ func (s *ProductService) Update(id string, req dto.UpdateProductRequest) (*dto.P
 	}
 	if req.SellingPrice > 0 {
 		product.SellingPrice = req.SellingPrice
+	}
+	// MemberPrice: pointer — explicit null clears it, value sets it
+	if req.MemberPrice != nil {
+		if *req.MemberPrice <= 0 {
+			product.MemberPrice = nil
+		} else {
+			product.MemberPrice = req.MemberPrice
+		}
 	}
 	if req.QtyPerBox > 0 {
 		product.QtyPerBox = req.QtyPerBox
@@ -216,6 +225,7 @@ func (s *ProductService) toResponse(p *entity.Product) dto.ProductResponse {
 		CategoryID:    p.CategoryID,
 		PurchasePrice: p.PurchasePrice,
 		SellingPrice:  p.SellingPrice,
+		MemberPrice:   p.MemberPrice,
 		QtyPerBox:     p.QtyPerBox,
 		Stock:         p.Stock,
 		Unit:          p.Unit,

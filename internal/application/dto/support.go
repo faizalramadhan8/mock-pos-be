@@ -12,6 +12,40 @@ type MemberResponse struct {
 	CreatedAt string `json:"created_at"`
 }
 
+type MemberStatsRequest struct {
+	From string `query:"from"`
+	To   string `query:"to"`
+}
+
+type MemberMonthlyBreakdown struct {
+	Month   string  `json:"month"`
+	Spend   float64 `json:"spend"`
+	Orders  int     `json:"orders"`
+	Savings float64 `json:"savings"`
+}
+
+type MemberTopProduct struct {
+	ProductID string  `json:"product_id"`
+	Name      string  `json:"name"`
+	Quantity  int     `json:"quantity"`
+	Spend     float64 `json:"spend"`
+}
+
+type MemberStatsResponse struct {
+	MemberID         string                   `json:"member_id"`
+	From             string                   `json:"from"`
+	To               string                   `json:"to"`
+	TotalSpend       float64                  `json:"total_spend"`
+	OrderCount       int                      `json:"order_count"`
+	AvgBasket        float64                  `json:"avg_basket"`
+	TotalSavings     float64                  `json:"total_savings"`
+	LastVisit        string                   `json:"last_visit,omitempty"`
+	LifetimeSpend    float64                  `json:"lifetime_spend"`
+	LifetimeOrders   int                      `json:"lifetime_orders"`
+	MonthlyBreakdown []MemberMonthlyBreakdown `json:"monthly_breakdown"`
+	TopProducts      []MemberTopProduct       `json:"top_products"`
+}
+
 type OpenCashSessionRequest struct {
 	Date        string  `json:"date" validate:"required"`
 	OpeningCash float64 `json:"opening_cash"`

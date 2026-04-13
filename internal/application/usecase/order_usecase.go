@@ -76,6 +76,7 @@ func (s *OrderService) Create(req dto.CreateOrderRequest, userID string) (*dto.O
 		Payment:            req.Payment,
 		Status:             "completed",
 		Customer:           req.Customer,
+		MemberID:           req.MemberID,
 		PaymentProof:       req.PaymentProof,
 		OrderDiscountType:  req.OrderDiscountType,
 		OrderDiscountValue: req.OrderDiscountValue,
@@ -92,6 +93,7 @@ func (s *OrderService) Create(req dto.CreateOrderRequest, userID string) (*dto.O
 			Quantity:       item.Quantity,
 			UnitType:       item.UnitType,
 			UnitPrice:      item.UnitPrice,
+			RegularPrice:   item.RegularPrice,
 			DiscountType:   item.DiscountType,
 			DiscountValue:  item.DiscountValue,
 			DiscountAmount: item.DiscountAmount,
@@ -99,7 +101,6 @@ func (s *OrderService) Create(req dto.CreateOrderRequest, userID string) (*dto.O
 		if orderItem.UnitType == "" {
 			orderItem.UnitType = "individual"
 		}
-		order.Items = append(order.Items, orderItem)
 
 		// Deduct stock
 		product, err := s.ProductRepo.FindByID(item.ProductID)
@@ -107,6 +108,19 @@ func (s *OrderService) Create(req dto.CreateOrderRequest, userID string) (*dto.O
 			tx.Rollback()
 			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Product not found: " + item.ProductID}
 		}
+
+		// Always capture regular_price snapshot at sale time:
+		// for member sales we need it to compute savings; for non-member we
+		// store selling_price so the historical record is self-contained.
+		if orderItem.RegularPrice == nil {
+			rp := product.SellingPrice
+			if orderItem.UnitType == "box" && product.QtyPerBox > 0 {
+				rp = product.SellingPrice * float64(product.QtyPerBox)
+			}
+			orderItem.RegularPrice = &rp
+		}
+
+		order.Items = append(order.Items, orderItem)
 
 		stockDelta := item.Quantity
 		if item.UnitType == "box" && product.QtyPerBox > 0 {
@@ -217,6 +231,7 @@ func (s *OrderService) toResponse(o *entity.Order) dto.OrderResponse {
 		Payment:            o.Payment,
 		Status:             o.Status,
 		Customer:           o.Customer,
+		MemberID:           o.MemberID,
 		PaymentProof:       o.PaymentProof,
 		OrderDiscountType:  o.OrderDiscountType,
 		OrderDiscountValue: o.OrderDiscountValue,
@@ -225,7 +240,19 @@ func (s *OrderService) toResponse(o *entity.Order) dto.OrderResponse {
 		CreatedAt:          o.CreatedAt.Format(time.RFC3339),
 	}
 
+	if o.Member != nil {
+		resp.Member = &dto.OrderMemberInfo{
+			ID:    o.Member.ID,
+			Name:  o.Member.Name,
+			Phone: o.Member.Phone,
+		}
+	}
+
+	var savings float64
 	for _, item := range o.Items {
+		if item.RegularPrice != nil && *item.RegularPrice > item.UnitPrice {
+			savings += (*item.RegularPrice - item.UnitPrice) * float64(item.Quantity)
+		}
 		resp.Items = append(resp.Items, dto.OrderItemResponse{
 			ID:             item.ID,
 			ProductID:      item.ProductID,
@@ -233,10 +260,14 @@ func (s *OrderService) toResponse(o *entity.Order) dto.OrderResponse {
 			Quantity:       item.Quantity,
 			UnitType:       item.UnitType,
 			UnitPrice:      item.UnitPrice,
+			RegularPrice:   item.RegularPrice,
 			DiscountType:   item.DiscountType,
 			DiscountValue:  item.DiscountValue,
 			DiscountAmount: item.DiscountAmount,
 		})
+	}
+	if o.MemberID != nil && savings > 0 {
+		resp.MemberSavings = savings
 	}
 	return resp
 }

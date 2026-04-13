@@ -1,33 +1,35 @@
 package dto
 
 type CreateProductRequest struct {
-	SKU           string  `json:"sku" validate:"required"`
-	Barcode       string  `json:"barcode"`
-	Name          string  `json:"name" validate:"required"`
-	NameID        string  `json:"name_id"`
-	CategoryID    string  `json:"category_id" validate:"required"`
-	PurchasePrice float64 `json:"purchase_price" validate:"min=0"`
-	SellingPrice  float64 `json:"selling_price" validate:"min=0"`
-	QtyPerBox     int     `json:"qty_per_box"`
-	Stock         int     `json:"stock"`
-	Unit          string  `json:"unit" validate:"required"`
-	Image         string  `json:"image"`
-	MinStock      int     `json:"min_stock"`
+	SKU           string   `json:"sku" validate:"required"`
+	Barcode       string   `json:"barcode"`
+	Name          string   `json:"name" validate:"required"`
+	NameID        string   `json:"name_id"`
+	CategoryID    string   `json:"category_id" validate:"required"`
+	PurchasePrice float64  `json:"purchase_price" validate:"min=0"`
+	SellingPrice  float64  `json:"selling_price" validate:"min=0"`
+	MemberPrice   *float64 `json:"member_price,omitempty"`
+	QtyPerBox     int      `json:"qty_per_box"`
+	Stock         int      `json:"stock"`
+	Unit          string   `json:"unit" validate:"required"`
+	Image         string   `json:"image"`
+	MinStock      int      `json:"min_stock"`
 }
 
 type UpdateProductRequest struct {
-	Name          string  `json:"name" validate:"omitempty"`
-	NameID        string  `json:"name_id"`
-	CategoryID    string  `json:"category_id"`
-	PurchasePrice float64 `json:"purchase_price"`
-	SellingPrice  float64 `json:"selling_price"`
-	QtyPerBox     int     `json:"qty_per_box"`
-	Stock         *int    `json:"stock"`
-	Unit          string  `json:"unit"`
-	Image         string  `json:"image"`
-	MinStock      int     `json:"min_stock"`
-	SKU           string  `json:"sku"`
-	Barcode       string  `json:"barcode"`
+	Name          string   `json:"name" validate:"omitempty"`
+	NameID        string   `json:"name_id"`
+	CategoryID    string   `json:"category_id"`
+	PurchasePrice float64  `json:"purchase_price"`
+	SellingPrice  float64  `json:"selling_price"`
+	MemberPrice   *float64 `json:"member_price,omitempty"`
+	QtyPerBox     int      `json:"qty_per_box"`
+	Stock         *int     `json:"stock"`
+	Unit          string   `json:"unit"`
+	Image         string   `json:"image"`
+	MinStock      int      `json:"min_stock"`
+	SKU           string   `json:"sku"`
+	Barcode       string   `json:"barcode"`
 }
 
 type AdjustStockRequest struct {
@@ -35,22 +37,23 @@ type AdjustStockRequest struct {
 }
 
 type ProductResponse struct {
-	ID            string           `json:"id"`
-	SKU           string           `json:"sku"`
-	Barcode       string           `json:"barcode,omitempty"`
-	Name          string           `json:"name"`
-	NameID        string           `json:"name_id"`
-	CategoryID    string           `json:"category_id"`
+	ID            string            `json:"id"`
+	SKU           string            `json:"sku"`
+	Barcode       string            `json:"barcode,omitempty"`
+	Name          string            `json:"name"`
+	NameID        string            `json:"name_id"`
+	CategoryID    string            `json:"category_id"`
 	Category      *CategoryResponse `json:"category,omitempty"`
-	PurchasePrice float64          `json:"purchase_price"`
-	SellingPrice  float64          `json:"selling_price"`
-	QtyPerBox     int              `json:"qty_per_box"`
-	Stock         int              `json:"stock"`
-	Unit          string           `json:"unit"`
-	Image         string           `json:"image,omitempty"`
-	MinStock      int              `json:"min_stock"`
-	IsActive      bool             `json:"is_active"`
-	CreatedAt     string           `json:"created_at"`
+	PurchasePrice float64           `json:"purchase_price"`
+	SellingPrice  float64           `json:"selling_price"`
+	MemberPrice   *float64          `json:"member_price,omitempty"`
+	QtyPerBox     int               `json:"qty_per_box"`
+	Stock         int               `json:"stock"`
+	Unit          string            `json:"unit"`
+	Image         string            `json:"image,omitempty"`
+	MinStock      int               `json:"min_stock"`
+	IsActive      bool              `json:"is_active"`
+	CreatedAt     string            `json:"created_at"`
 }
 
 type CreateCategoryRequest struct {

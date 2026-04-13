@@ -78,6 +78,18 @@ func (ctrl *MemberController) Create(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusCreated).JSON(dto.ApiResponse{Code: fiber.StatusCreated, Message: "successfully", Body: resp})
 }
 
+func (ctrl *MemberController) GetStats(c *fiber.Ctx) error {
+	id := c.Params("id")
+	from := c.Query("from", "")
+	to := c.Query("to", "")
+
+	stats, fail := ctrl.Service.GetStats(id, from, to)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "successfully", Body: stats})
+}
+
 func (ctrl *MemberController) Delete(c *fiber.Ctx) error {
 	id := c.Params("id")
 	if fail := ctrl.Service.Delete(id); fail != nil {

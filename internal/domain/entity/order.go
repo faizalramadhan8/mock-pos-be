@@ -15,6 +15,8 @@ type Order struct {
 	Payment            string         `gorm:"type:varchar(20);not null;default:'cash'" json:"payment"`
 	Status             string         `gorm:"type:varchar(20);not null;default:'completed'" json:"status"`
 	Customer           string         `gorm:"type:varchar(200);null" json:"customer,omitempty"`
+	MemberID           *string        `gorm:"type:varchar(36);null;index" json:"member_id,omitempty"`
+	Member             *Member        `gorm:"foreignKey:MemberID" json:"member,omitempty"`
 	PaymentProof       string         `gorm:"type:text;null" json:"payment_proof,omitempty"`
 	OrderDiscountType  string         `gorm:"type:varchar(20);null" json:"order_discount_type,omitempty"`
 	OrderDiscountValue float64        `gorm:"type:decimal(15,2);null;default:0" json:"order_discount_value"`
@@ -35,6 +37,7 @@ type OrderItem struct {
 	Quantity       int       `gorm:"type:int;not null;default:1" json:"quantity"`
 	UnitType       string    `gorm:"type:varchar(20);not null;default:'individual'" json:"unit_type"`
 	UnitPrice      float64   `gorm:"type:decimal(15,2);not null;default:0" json:"unit_price"`
+	RegularPrice   *float64  `gorm:"type:decimal(15,2);null" json:"regular_price,omitempty"`
 	DiscountType   string    `gorm:"type:varchar(20);null" json:"discount_type,omitempty"`
 	DiscountValue  float64   `gorm:"type:decimal(15,2);null;default:0" json:"discount_value"`
 	DiscountAmount float64   `gorm:"type:decimal(15,2);null;default:0" json:"discount_amount"`

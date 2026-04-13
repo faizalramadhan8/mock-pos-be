@@ -24,7 +24,7 @@ func (r *OrderRepository) FindAll(status string, limit, offset int) ([]entity.Or
 	}
 	query.Count(&total)
 
-	if err := query.Preload("Items").Order("created_at DESC").Limit(limit).Offset(offset).Find(&orders).Error; err != nil {
+	if err := query.Preload("Items").Preload("Member").Order("created_at DESC").Limit(limit).Offset(offset).Find(&orders).Error; err != nil {
 		return nil, 0, err
 	}
 	return orders, total, nil
@@ -32,7 +32,7 @@ func (r *OrderRepository) FindAll(status string, limit, offset int) ([]entity.Or
 
 func (r *OrderRepository) FindByID(id string) (*entity.Order, error) {
 	var order entity.Order
-	if err := r.DB.Preload("Items").Where("id = ?", id).First(&order).Error; err != nil {
+	if err := r.DB.Preload("Items").Preload("Member").Where("id = ?", id).First(&order).Error; err != nil {
 		return nil, err
 	}
 	return &order, nil
@@ -40,7 +40,7 @@ func (r *OrderRepository) FindByID(id string) (*entity.Order, error) {
 
 func (r *OrderRepository) FindByDateRange(startDate, endDate string) ([]entity.Order, error) {
 	var orders []entity.Order
-	if err := r.DB.Preload("Items").Where("DATE(created_at) BETWEEN ? AND ?", startDate, endDate).Order("created_at DESC").Find(&orders).Error; err != nil {
+	if err := r.DB.Preload("Items").Preload("Member").Where("DATE(created_at) BETWEEN ? AND ?", startDate, endDate).Order("created_at DESC").Find(&orders).Error; err != nil {
 		return nil, err
 	}
 	return orders, nil
@@ -52,6 +52,30 @@ func (r *OrderRepository) Create(order *entity.Order) error {
 
 func (r *OrderRepository) Update(order *entity.Order) error {
 	return r.DB.Save(order).Error
+}
+
+// FindByMember returns orders for a member within optional date range.
+// from/to are inclusive YYYY-MM-DD strings; pass "" to skip bound.
+func (r *OrderRepository) FindByMember(memberID, from, to string, limit, offset int) ([]entity.Order, int64, error) {
+	var orders []entity.Order
+	var total int64
+
+	q := r.DB.Model(&entity.Order{}).Where("member_id = ? AND status = 'completed'", memberID)
+	if from != "" {
+		q = q.Where("DATE(created_at) >= ?", from)
+	}
+	if to != "" {
+		q = q.Where("DATE(created_at) <= ?", to)
+	}
+	q.Count(&total)
+
+	if limit <= 0 {
+		limit = 1000
+	}
+	if err := q.Preload("Items").Order("created_at DESC").Limit(limit).Offset(offset).Find(&orders).Error; err != nil {
+		return nil, 0, err
+	}
+	return orders, total, nil
 }
 
 func (r *OrderRepository) GetRevenueStats() (float64, int64, error) {

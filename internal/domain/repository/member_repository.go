@@ -30,6 +30,14 @@ func (r *MemberRepository) FindAll(search string, limit, offset int) ([]entity.M
 	return members, total, nil
 }
 
+func (r *MemberRepository) FindByID(id string) (*entity.Member, error) {
+	var member entity.Member
+	if err := r.DB.Where("id = ?", id).First(&member).Error; err != nil {
+		return nil, err
+	}
+	return &member, nil
+}
+
 func (r *MemberRepository) FindByPhone(phone string) (*entity.Member, error) {
 	var member entity.Member
 	if err := r.DB.Where("phone = ?", phone).First(&member).Error; err != nil {

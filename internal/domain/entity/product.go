@@ -28,6 +28,7 @@ type Product struct {
 	Category      *Category      `gorm:"foreignKey:CategoryID" json:"category,omitempty"`
 	PurchasePrice float64        `gorm:"type:decimal(15,2);not null;default:0" json:"purchase_price"`
 	SellingPrice  float64        `gorm:"type:decimal(15,2);not null;default:0" json:"selling_price"`
+	MemberPrice   *float64       `gorm:"type:decimal(15,2);null" json:"member_price,omitempty"`
 	QtyPerBox     int            `gorm:"type:int;not null;default:1" json:"qty_per_box"`
 	Stock         int            `gorm:"type:int;not null;default:0" json:"stock"`
 	Unit          string         `gorm:"type:varchar(20);not null;default:'pcs'" json:"unit"`
