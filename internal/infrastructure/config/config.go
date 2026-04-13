@@ -33,6 +33,11 @@ type Config struct {
 
 	VAPIDPublicKey  string `koanf:"VAPID_PUBLIC_KEY"`
 	VAPIDPrivateKey string `koanf:"VAPID_PRIVATE_KEY"`
+
+	WahaURL          string `koanf:"WAHA_URL"`
+	WahaAPIKey       string `koanf:"WAHA_API_KEY"`
+	WahaSession      string `koanf:"WAHA_SESSION"`
+	WAReceiptEnabled bool   `koanf:"WA_RECEIPT_ENABLED"`
 }
 
 func (c *Config) GetGormAddress() string {

@@ -10,26 +10,34 @@ import (
 	"github.com/faizalramadhan/pos-be/internal/domain/entity"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
 	"github.com/faizalramadhan/pos-be/internal/domain/repository"
+	"github.com/faizalramadhan/pos-be/internal/infrastructure/whatsapp"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
 )
 
 type OrderService struct {
-	Log         *zerolog.Logger
-	DB          *gorm.DB
-	Repo        *repository.OrderRepository
-	ProductRepo *repository.ProductRepository
-	BatchRepo   *repository.StockBatchRepository
+	Log          *zerolog.Logger
+	DB           *gorm.DB
+	Repo         *repository.OrderRepository
+	ProductRepo  *repository.ProductRepository
+	BatchRepo    *repository.StockBatchRepository
+	SettingsRepo *repository.SettingsRepository
+	AuthRepo     *repository.AuthRepository
+	WA           *whatsapp.Service
 }
 
 func NewOrderService(ctx context.Context, db *gorm.DB) *OrderService {
 	logger := ctx.Value(enum.LoggerCtxKey).(*zerolog.Logger)
+	wa, _ := ctx.Value(enum.WhatsAppCtxKey).(*whatsapp.Service)
 	return &OrderService{
-		Log:         logger,
-		DB:          db,
-		Repo:        repository.NewOrderRepository(ctx, db),
-		ProductRepo: repository.NewProductRepository(ctx, db),
-		BatchRepo:   repository.NewStockBatchRepository(ctx, db),
+		Log:          logger,
+		DB:           db,
+		Repo:         repository.NewOrderRepository(ctx, db),
+		ProductRepo:  repository.NewProductRepository(ctx, db),
+		BatchRepo:    repository.NewStockBatchRepository(ctx, db),
+		SettingsRepo: repository.NewSettingsRepository(ctx, db),
+		AuthRepo:     repository.NewAuthRepository(ctx, db),
+		WA:           wa,
 	}
 }
 
@@ -154,8 +162,44 @@ func (s *OrderService) Create(req dto.CreateOrderRequest, userID string) (*dto.O
 	if created != nil {
 		order = created
 	}
+
+	// Fire-and-forget WhatsApp receipt — never block checkout on WA failure
+	go s.sendReceiptWA(order, userID)
+
 	resp := s.toResponse(order)
 	return &resp, nil
+}
+
+// sendReceiptWA dispatches a WhatsApp receipt to the member associated with
+// the order. No-op if WA is disabled, order has no member, or member has no
+// valid phone number. Runs in its own goroutine — all errors are logged.
+func (s *OrderService) sendReceiptWA(order *entity.Order, userID string) {
+	if s.WA == nil || !s.WA.Enabled() {
+		return
+	}
+	if order.Member == nil || order.Member.Phone == "" {
+		return
+	}
+
+	storeName := "BakeShop"
+	if settings, err := s.SettingsRepo.Get(); err == nil && settings != nil && settings.StoreName != "" {
+		storeName = settings.StoreName
+	}
+	cashierName := ""
+	if u, err := s.AuthRepo.FindByID(userID); err == nil && u != nil {
+		cashierName = u.FullName
+	}
+
+	text := whatsapp.FormatReceipt(order, storeName, cashierName)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := s.WA.SendText(ctx, order.Member.Phone, text); err != nil {
+		s.Log.Warn().Err(err).
+			Str("order_id", order.ID).
+			Str("member_phone", order.Member.Phone).
+			Msg("Failed to send WA receipt")
+	}
 }
 
 func (s *OrderService) CancelOrder(id string) (*dto.OrderResponse, *dto.ApiError) {

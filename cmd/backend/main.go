@@ -22,6 +22,7 @@ import (
 	"github.com/faizalramadhan/pos-be/internal/infrastructure/config"
 	"github.com/faizalramadhan/pos-be/internal/infrastructure/database"
 	"github.com/faizalramadhan/pos-be/internal/infrastructure/logging"
+	"github.com/faizalramadhan/pos-be/internal/infrastructure/whatsapp"
 
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -104,6 +105,9 @@ func main() {
 		logfile.Fatal().Err(err).Msg("Failed to connect to Redis")
 	}
 	ctx = context.WithValue(ctx, enum.RedisCtxKey, redisInstance)
+
+	waService := whatsapp.New(cfg.WahaURL, cfg.WahaAPIKey, cfg.WahaSession, cfg.WAReceiptEnabled, logfile)
+	ctx = context.WithValue(ctx, enum.WhatsAppCtxKey, waService)
 
 	app := fiber.New(fiber.Config{
 		ProxyHeader: fiber.HeaderXForwardedFor,
