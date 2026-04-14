@@ -81,3 +81,9 @@ func (r *ProductRepository) ExistsBySKU(sku string) (bool, error) {
 	err := r.DB.Model(&entity.Product{}).Where("sku = ?", sku).Count(&count).Error
 	return count > 0, err
 }
+
+// Delete performs a soft delete (sets deleted_at) so order history can still
+// reference the product by id + cached name snapshot.
+func (r *ProductRepository) Delete(id string) error {
+	return r.DB.Delete(&entity.Product{}, "id = ?", id).Error
+}

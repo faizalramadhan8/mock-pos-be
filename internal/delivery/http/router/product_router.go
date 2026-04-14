@@ -24,6 +24,7 @@ func UseProductRouter(ctx context.Context, r fiber.Router) {
 	products.Put("/:id", auth.AllowInventoryWrite(), ctrl.Update)
 	products.Patch("/:id/stock", auth.AllowInventoryWrite(), ctrl.AdjustStock)
 	products.Patch("/:id/toggle-active", auth.AllowAdmins(), ctrl.ToggleActive)
+	products.Delete("/:id", auth.AllowAdmins(), ctrl.Delete)
 }
 
 func UseCategoryRouter(ctx context.Context, r fiber.Router) {

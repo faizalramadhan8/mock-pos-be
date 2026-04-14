@@ -199,6 +199,19 @@ func (s *ProductService) AdjustStock(id string, delta int) (*dto.ProductResponse
 	return &resp, nil
 }
 
+// Delete soft-deletes a product. Previous orders that reference it keep their
+// own name/price snapshots in order_items, so history stays intact.
+func (s *ProductService) Delete(id string) *dto.ApiError {
+	if _, err := s.Repo.FindByID(id); err != nil {
+		return &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Product not found"}
+	}
+	if err := s.Repo.Delete(id); err != nil {
+		s.Log.Error().Err(err).Msg("Failed to delete product")
+		return &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to delete product"}
+	}
+	return nil
+}
+
 func (s *ProductService) ToggleActive(id string) (*dto.ProductResponse, *dto.ApiError) {
 	product, err := s.Repo.FindByID(id)
 	if err != nil {

@@ -123,6 +123,14 @@ func (ctrl *ProductController) AdjustStock(c *fiber.Ctx) error {
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "successfully", Body: resp})
 }
 
+func (ctrl *ProductController) Delete(c *fiber.Ctx) error {
+	id := c.Params("id")
+	if fail := ctrl.Service.Delete(id); fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Product deleted successfully"})
+}
+
 func (ctrl *ProductController) ToggleActive(c *fiber.Ctx) error {
 	id := c.Params("id")
 	resp, fail := ctrl.Service.ToggleActive(id)
