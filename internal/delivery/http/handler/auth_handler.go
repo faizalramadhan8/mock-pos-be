@@ -87,12 +87,22 @@ func (ctrl *AuthController) Login(c *fiber.Ctx) error {
 		})
 	}
 
-	resp, fail := ctrl.AuthService.Login(req)
+	resp, pending, fail := ctrl.AuthService.Login(req, c.Get(fiber.HeaderUserAgent))
 	if fail != nil {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
 			Code:    fail.StatusCode.Code,
 			Message: fail.StatusCode.Message,
 			Error:   fail.Message,
+		})
+	}
+
+	// Device awaiting owner approval — return 202 so frontend can poll.
+	if pending != nil {
+		ctrl.Log.Info().Msgf("Login pending device approval: user=%s device=%s", req.Email, pending.DeviceID)
+		return c.Status(fiber.StatusAccepted).JSON(dto.ApiResponse{
+			Code:    fiber.StatusAccepted,
+			Message: "Menunggu persetujuan owner. Cek WhatsApp owner untuk approve.",
+			Body:    pending,
 		})
 	}
 
@@ -123,66 +133,10 @@ func (ctrl *AuthController) GetProfile(c *fiber.Ctx) error {
 	})
 }
 
-func (ctrl *AuthController) RefreshToken(c *fiber.Ctx) error {
-	var req dto.RefreshTokenRequest
-
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusUnprocessableEntity).JSON(dto.ApiResponse{
-			Code:    fiber.ErrUnprocessableEntity.Code,
-			Message: fiber.ErrUnprocessableEntity.Message,
-			Error:   err.Error(),
-		})
-	}
-
-	ctrl.Log.Info().Msg("Refreshing access token")
-
-	if err := util.ValidateRequest(req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{
-			Code:    fiber.ErrBadRequest.Code,
-			Message: fiber.ErrBadRequest.Message,
-			Error:   err,
-		})
-	}
-
-	resp, fail := ctrl.AuthService.RefreshToken(req)
-	if fail != nil {
-		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
-			Code:    fail.StatusCode.Code,
-			Message: fail.StatusCode.Message,
-			Error:   fail.Message,
-		})
-	}
-
-	ctrl.Log.Info().Msg("Token refreshed successfully")
-	return c.JSON(dto.ApiResponse{
-		Code:    fiber.StatusOK,
-		Message: "successfully",
-		Body:    resp,
-	})
-}
-
 func (ctrl *AuthController) Logout(c *fiber.Ctx) error {
-	var req dto.RefreshTokenRequest
-
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusUnprocessableEntity).JSON(dto.ApiResponse{
-			Code:    fiber.ErrUnprocessableEntity.Code,
-			Message: fiber.ErrUnprocessableEntity.Message,
-			Error:   err.Error(),
-		})
-	}
-
 	ctrl.Log.Info().Msg("User logout")
 
-	if err := util.ValidateRequest(req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{
-			Code:    fiber.ErrBadRequest.Code,
-			Message: fiber.ErrBadRequest.Message,
-			Error:   err,
-		})
-	}
-
-	if fail := ctrl.AuthService.Logout(req.RefreshToken); fail != nil {
+	if fail := ctrl.AuthService.Logout(); fail != nil {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
 			Code:    fail.StatusCode.Code,
 			Message: fail.StatusCode.Message,
@@ -190,30 +144,9 @@ func (ctrl *AuthController) Logout(c *fiber.Ctx) error {
 		})
 	}
 
-	ctrl.Log.Info().Msg("User logged out successfully")
 	return c.JSON(dto.ApiResponse{
 		Code:    fiber.StatusOK,
 		Message: "Logged out successfully",
-	})
-}
-
-func (ctrl *AuthController) LogoutAll(c *fiber.Ctx) error {
-	claims := c.Locals("session").(*dto.JWTClaims)
-
-	ctrl.Log.Info().Msgf("User %s logging out from all devices", claims.ID)
-
-	if fail := ctrl.AuthService.LogoutAll(claims.ID); fail != nil {
-		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
-			Code:    fail.StatusCode.Code,
-			Message: fail.StatusCode.Message,
-			Error:   fail.Message,
-		})
-	}
-
-	ctrl.Log.Info().Msgf("User %s logged out from all devices", claims.ID)
-	return c.JSON(dto.ApiResponse{
-		Code:    fiber.StatusOK,
-		Message: "Logged out from all devices successfully",
 	})
 }
 

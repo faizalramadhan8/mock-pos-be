@@ -89,7 +89,7 @@ func (s *Scheduler) checkAndNotify() {
 		return
 	}
 
-	title := "BakeShop Alert"
+	title := "Toko Bahan Kue Santi — Alert"
 	body := ""
 	for i, a := range alerts {
 		if i > 0 {

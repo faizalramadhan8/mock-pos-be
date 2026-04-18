@@ -24,10 +24,9 @@ type Config struct {
 	RedisPass string `koanf:"REDIS_PASSWORD"`
 	RedisDB   int    `koanf:"REDIS_DB"`
 
-	JwtSecret                string        `koanf:"JWT_SECRET"`
-	JwtAccessTokenExpiresIn  time.Duration `koanf:"JWT_ACCESS_TOKEN_EXPIRED_IN"`
-	JwtRefreshTokenExpiresIn time.Duration `koanf:"JWT_REFRESH_TOKEN_EXPIRED_IN"`
-	LogFile                  string        `koanf:"LOGFILE"`
+	JwtSecret               string        `koanf:"JWT_SECRET"`
+	JwtAccessTokenExpiresIn time.Duration `koanf:"JWT_ACCESS_TOKEN_EXPIRED_IN"`
+	LogFile                 string        `koanf:"LOGFILE"`
 
 	InstanceID string `koanf:"INSTANCE_ID"`
 
@@ -38,6 +37,9 @@ type Config struct {
 	WahaAPIKey       string `koanf:"WAHA_API_KEY"`
 	WahaSession      string `koanf:"WAHA_SESSION"`
 	WAReceiptEnabled bool   `koanf:"WA_RECEIPT_ENABLED"`
+
+	SecurityNotificationPhone  string `koanf:"SECURITY_NOTIFICATION_PHONE"`
+	TransactionNotificationEnabled bool `koanf:"TRANSACTION_NOTIFICATION_ENABLED"`
 }
 
 func (c *Config) GetGormAddress() string {

@@ -15,7 +15,7 @@ import (
 // storeName is taken from settings so the message looks branded.
 func FormatReceipt(order *entity.Order, storeName, cashierName string) string {
 	if storeName == "" {
-		storeName = "BakeShop"
+		storeName = "Toko Bahan Kue Santi"
 	}
 	var b strings.Builder
 

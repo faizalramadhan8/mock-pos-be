@@ -28,6 +28,7 @@ type AuthService struct {
 	Configs *config.Config
 	Repo    *repository.AuthRepository
 	Redis   *redis.Client
+	Device  *DeviceService
 }
 
 func NewAuthService(ctx context.Context, db *gorm.DB) *AuthService {
@@ -39,6 +40,7 @@ func NewAuthService(ctx context.Context, db *gorm.DB) *AuthService {
 		Repo:    repository.NewAuthRepository(ctx, db),
 		Configs: configs,
 		Redis:   redisInstance.GetRedisClient(ctx),
+		Device:  NewDeviceService(ctx, db),
 	}
 }
 
@@ -125,18 +127,18 @@ func (s *AuthService) Register(req dto.RegisterRequest) (*dto.RegisterResponse, 
 	return response, nil
 }
 
-func (s *AuthService) Login(req dto.LoginRequest) (*dto.LoginResponse, *dto.ApiError) {
+func (s *AuthService) Login(req dto.LoginRequest, userAgent string) (*dto.LoginResponse, *dto.DevicePendingResponse, *dto.ApiError) {
 	user, err := s.Repo.FindByEmail(req.Email)
 	if err != nil {
 		s.Log.Error().Msg(err.Error())
-		return nil, &dto.ApiError{
+		return nil, nil, &dto.ApiError{
 			StatusCode: fiber.ErrNotFound,
 			Message:    "User not found",
 		}
 	}
 
 	if !user.IsActive {
-		return nil, &dto.ApiError{
+		return nil, nil, &dto.ApiError{
 			StatusCode: fiber.ErrForbidden,
 			Message:    "Account is deactivated",
 		}
@@ -144,15 +146,28 @@ func (s *AuthService) Login(req dto.LoginRequest) (*dto.LoginResponse, *dto.ApiE
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
 		s.Log.Error().Msg(err.Error())
-		return nil, &dto.ApiError{
+		return nil, nil, &dto.ApiError{
 			StatusCode: fiber.ErrUnauthorized,
 			Message:    "Invalid credentials",
 		}
 	}
 
-	ctx := context.Background()
+	// Device binding check — only gates cashier/staff/user roles.
+	// superadmin/admin bypass so owner keeps emergency access.
+	if IsGatedRole(user.Role) {
+		dev, approved, fail := s.Device.EnsureApproved(user, req.DeviceFingerprint, userAgent)
+		if fail != nil {
+			return nil, nil, fail
+		}
+		if !approved {
+			return nil, &dto.DevicePendingResponse{
+				DeviceID:    dev.ID,
+				Fingerprint: dev.Fingerprint,
+				Status:      string(dev.Status),
+			}, nil
+		}
+	}
 
-	// Generate access token (short-lived: 15 minutes)
 	claims := &dto.JWTClaims{
 		ID:       user.ID,
 		Email:    user.Email,
@@ -172,38 +187,19 @@ func (s *AuthService) Login(req dto.LoginRequest) (*dto.LoginResponse, *dto.ApiE
 
 	accessToken, err := util.MarshalClaims(s.Configs.JwtSecret, claims)
 	if err != nil {
-		return nil, &dto.ApiError{
+		return nil, nil, &dto.ApiError{
 			StatusCode: fiber.ErrInternalServerError,
 			Message:    err.Error(),
 		}
 	}
 
-	// Generate refresh token (long-lived: 7 days)
-	refreshToken := uuid.New().String()
-	refreshTokenData := &dto.RefreshTokenData{
-		UserID:   user.ID,
-		Email:    user.Email,
-		FullName: user.FullName,
-		Role:     string(user.Role),
-	}
-
-	// Store refresh token in Redis
-	if err := s.storeRefreshToken(ctx, refreshToken, refreshTokenData, s.Configs.JwtRefreshTokenExpiresIn); err != nil {
-		s.Log.Error().Err(err).Msg("Failed to store refresh token")
-		return nil, &dto.ApiError{
-			StatusCode: fiber.ErrInternalServerError,
-			Message:    "Failed to create session",
-		}
-	}
-
 	userResponse := dto.LoginResponse{
-		AccessToken:  accessToken.TokenString,
-		RefreshToken: refreshToken,
-		ExpiresIn:    int64(s.Configs.JwtAccessTokenExpiresIn.Seconds()),
-		User:         s.toUserResponse(user),
+		AccessToken: accessToken.TokenString,
+		ExpiresIn:   int64(s.Configs.JwtAccessTokenExpiresIn.Seconds()),
+		User:        s.toUserResponse(user),
 	}
 
-	return &userResponse, nil
+	return &userResponse, nil, nil
 }
 
 func (s *AuthService) toUserResponse(user *entity.User) dto.UserResponse {
@@ -278,160 +274,8 @@ func (s *AuthService) GetSession(claims *dto.JWTClaims) (*dto.UserSessions, *dto
 	return &session, nil
 }
 
-func (s *AuthService) storeRefreshToken(ctx context.Context, token string, data *dto.RefreshTokenData, ttl time.Duration) error {
-	key := fmt.Sprintf("refresh_token:%s", token)
-	jsonData, err := json.Marshal(data)
-	if err != nil {
-		return err
-	}
-	return s.Redis.Set(ctx, key, jsonData, ttl).Err()
-}
-
-func (s *AuthService) getRefreshTokenData(ctx context.Context, token string) (*dto.RefreshTokenData, error) {
-	key := fmt.Sprintf("refresh_token:%s", token)
-	data, err := s.Redis.Get(ctx, key).Result()
-	if err != nil {
-		return nil, err
-	}
-
-	var tokenData dto.RefreshTokenData
-	if err := json.Unmarshal([]byte(data), &tokenData); err != nil {
-		return nil, err
-	}
-	return &tokenData, nil
-}
-
-func (s *AuthService) revokeRefreshToken(ctx context.Context, token string) error {
-	key := fmt.Sprintf("refresh_token:%s", token)
-	return s.Redis.Del(ctx, key).Err()
-}
-
-func (s *AuthService) revokeAllUserRefreshTokens(ctx context.Context, userID string) error {
-	pattern := fmt.Sprintf("refresh_token:*")
-	iter := s.Redis.Scan(ctx, 0, pattern, 0).Iterator()
-
-	for iter.Next(ctx) {
-		key := iter.Val()
-		data, err := s.Redis.Get(ctx, key).Result()
-		if err != nil {
-			continue
-		}
-
-		var tokenData dto.RefreshTokenData
-		if err := json.Unmarshal([]byte(data), &tokenData); err != nil {
-			continue
-		}
-
-		if tokenData.UserID == userID {
-			s.Redis.Del(ctx, key)
-		}
-	}
-
-	return iter.Err()
-}
-
-func (s *AuthService) RefreshToken(req dto.RefreshTokenRequest) (*dto.RefreshTokenResponse, *dto.ApiError) {
-	ctx := context.Background()
-
-	tokenData, err := s.getRefreshTokenData(ctx, req.RefreshToken)
-	if err != nil {
-		s.Log.Warn().Err(err).Msg("Invalid or expired refresh token")
-		return nil, &dto.ApiError{
-			StatusCode: fiber.ErrUnauthorized,
-			Message:    "Invalid or expired refresh token",
-		}
-	}
-
-	user, err := s.Repo.FindByID(tokenData.UserID)
-	if err != nil {
-		s.Log.Error().Err(err).Msg("User not found during token refresh")
-		return nil, &dto.ApiError{
-			StatusCode: fiber.ErrUnauthorized,
-			Message:    "User not found",
-		}
-	}
-
-	claims := &dto.JWTClaims{
-		ID:       user.ID,
-		Email:    user.Email,
-		Fullname: user.FullName,
-		Phone:    user.PhoneNumber,
-		Role:     string(user.Role),
-		Session:  user.ID,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: &jwt.NumericDate{
-				Time: time.Now().Add(s.Configs.JwtAccessTokenExpiresIn),
-			},
-			IssuedAt: &jwt.NumericDate{
-				Time: time.Now(),
-			},
-		},
-	}
-
-	newAccessToken, err := util.MarshalClaims(s.Configs.JwtSecret, claims)
-	if err != nil {
-		return nil, &dto.ApiError{
-			StatusCode: fiber.ErrInternalServerError,
-			Message:    err.Error(),
-		}
-	}
-
-	newRefreshToken := uuid.New().String()
-	refreshTokenData := &dto.RefreshTokenData{
-		UserID:   user.ID,
-		Email:    user.Email,
-		FullName: user.FullName,
-		Role:     string(user.Role),
-	}
-
-	if err := s.storeRefreshToken(ctx, newRefreshToken, refreshTokenData, s.Configs.JwtRefreshTokenExpiresIn); err != nil {
-		s.Log.Error().Err(err).Msg("Failed to store new refresh token")
-		return nil, &dto.ApiError{
-			StatusCode: fiber.ErrInternalServerError,
-			Message:    "Failed to refresh session",
-		}
-	}
-
-	if err := s.revokeRefreshToken(ctx, req.RefreshToken); err != nil {
-		s.Log.Warn().Err(err).Msg("Failed to revoke old refresh token")
-	}
-
-	s.Log.Info().Msgf("Token refreshed for user: %s", user.ID)
-
-	return &dto.RefreshTokenResponse{
-		AccessToken:  newAccessToken.TokenString,
-		RefreshToken: newRefreshToken,
-		ExpiresIn:    int64(s.Configs.JwtAccessTokenExpiresIn.Seconds()),
-	}, nil
-}
-
-func (s *AuthService) Logout(refreshToken string) *dto.ApiError {
-	ctx := context.Background()
-
-	if err := s.revokeRefreshToken(ctx, refreshToken); err != nil {
-		s.Log.Error().Err(err).Msg("Failed to revoke refresh token")
-		return &dto.ApiError{
-			StatusCode: fiber.ErrInternalServerError,
-			Message:    "Failed to logout",
-		}
-	}
-
+func (s *AuthService) Logout() *dto.ApiError {
 	s.Log.Info().Msg("User logged out successfully")
-	return nil
-}
-
-func (s *AuthService) LogoutAll(userID string) *dto.ApiError {
-	ctx := context.Background()
-
-	if err := s.revokeAllUserRefreshTokens(ctx, userID); err != nil {
-		s.Log.Error().Err(err).Msg("Failed to revoke all user tokens")
-		return &dto.ApiError{
-			StatusCode: fiber.ErrInternalServerError,
-			Message:    "Failed to logout from all devices",
-		}
-	}
-
-	s.Log.Info().Msgf("User %s logged out from all devices", userID)
 	return nil
 }
 

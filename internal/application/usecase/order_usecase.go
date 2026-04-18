@@ -2,6 +2,8 @@ package usecase
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -10,6 +12,7 @@ import (
 	"github.com/faizalramadhan/pos-be/internal/domain/entity"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
 	"github.com/faizalramadhan/pos-be/internal/domain/repository"
+	"github.com/faizalramadhan/pos-be/internal/infrastructure/config"
 	"github.com/faizalramadhan/pos-be/internal/infrastructure/whatsapp"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
@@ -24,11 +27,13 @@ type OrderService struct {
 	SettingsRepo *repository.SettingsRepository
 	AuthRepo     *repository.AuthRepository
 	WA           *whatsapp.Service
+	Configs      *config.Config
 }
 
 func NewOrderService(ctx context.Context, db *gorm.DB) *OrderService {
 	logger := ctx.Value(enum.LoggerCtxKey).(*zerolog.Logger)
 	wa, _ := ctx.Value(enum.WhatsAppCtxKey).(*whatsapp.Service)
+	cfg, _ := ctx.Value(enum.ConfigCtxKey).(*config.Config)
 	return &OrderService{
 		Log:          logger,
 		DB:           db,
@@ -38,6 +43,7 @@ func NewOrderService(ctx context.Context, db *gorm.DB) *OrderService {
 		SettingsRepo: repository.NewSettingsRepository(ctx, db),
 		AuthRepo:     repository.NewAuthRepository(ctx, db),
 		WA:           wa,
+		Configs:      cfg,
 	}
 }
 
@@ -163,8 +169,9 @@ func (s *OrderService) Create(req dto.CreateOrderRequest, userID string) (*dto.O
 		order = created
 	}
 
-	// Fire-and-forget WhatsApp receipt — never block checkout on WA failure
+	// Fire-and-forget WhatsApp messages — never block checkout on WA failure.
 	go s.sendReceiptWA(order, userID)
+	go s.sendTransactionNotificationWA(order, userID)
 
 	resp := s.toResponse(order)
 	return &resp, nil
@@ -184,7 +191,7 @@ func (s *OrderService) ResendReceiptWA(orderID, userID string) *dto.ApiError {
 		return &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Order is not linked to a member with a phone number"}
 	}
 
-	storeName := "BakeShop"
+	storeName := "Toko Bahan Kue Santi"
 	if settings, sErr := s.SettingsRepo.Get(); sErr == nil && settings != nil && settings.StoreName != "" {
 		storeName = settings.StoreName
 	}
@@ -214,7 +221,7 @@ func (s *OrderService) sendReceiptWA(order *entity.Order, userID string) {
 		return
 	}
 
-	storeName := "BakeShop"
+	storeName := "Toko Bahan Kue Santi"
 	if settings, err := s.SettingsRepo.Get(); err == nil && settings != nil && settings.StoreName != "" {
 		storeName = settings.StoreName
 	}
@@ -233,6 +240,135 @@ func (s *OrderService) sendReceiptWA(order *entity.Order, userID string) {
 			Str("member_phone", order.Member.Phone).
 			Msg("Failed to send WA receipt")
 	}
+}
+
+// sendTransactionNotificationWA notifies the owner via WhatsApp of a new
+// transaction. Independent of WA_RECEIPT_ENABLED — uses SendSecurityText so
+// the owner is pinged even when customer-receipt sending is off. Gated by
+// TRANSACTION_NOTIFICATION_ENABLED. Runs as a goroutine after checkout.
+func (s *OrderService) sendTransactionNotificationWA(order *entity.Order, userID string) {
+	if s.Configs == nil || !s.Configs.TransactionNotificationEnabled {
+		return
+	}
+	if s.WA == nil || !s.WA.Configured() {
+		return
+	}
+	phone := s.Configs.SecurityNotificationPhone
+	if phone == "" {
+		s.Log.Warn().Msg("SECURITY_NOTIFICATION_PHONE not set; transaction notification skipped")
+		return
+	}
+
+	cashierName := "-"
+	if u, err := s.AuthRepo.FindByID(userID); err == nil && u != nil {
+		cashierName = u.FullName
+	}
+
+	text := formatTransactionNotification(order, cashierName)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := s.WA.SendSecurityText(ctx, phone, text); err != nil {
+		s.Log.Warn().Err(err).
+			Str("order_id", order.ID).
+			Msg("Failed to send WA transaction notification")
+	}
+}
+
+// formatTransactionNotification renders the detail view for the owner's WA.
+// Lists all items if ≤5, otherwise first 4 + "dan N lainnya".
+func formatTransactionNotification(order *entity.Order, cashierName string) string {
+	var b strings.Builder
+
+	fmt.Fprintf(&b, "💰 *Transaksi Baru*\n\n")
+	fmt.Fprintf(&b, "Kasir: %s\n", cashierName)
+	fmt.Fprintf(&b, "Total: *%s*\n", formatRupiah(order.Total))
+	fmt.Fprintf(&b, "Pembayaran: %s\n", prettyPayment(order.Payment))
+	if order.Member != nil && order.Member.Name != "" {
+		fmt.Fprintf(&b, "Member: %s\n", order.Member.Name)
+	} else if order.Customer != "" {
+		fmt.Fprintf(&b, "Customer: %s\n", order.Customer)
+	}
+
+	if len(order.Items) > 0 {
+		fmt.Fprintf(&b, "\nItem (%d):\n", len(order.Items))
+		const maxShown = 5
+		shown := order.Items
+		hidden := 0
+		if len(shown) > maxShown {
+			shown = order.Items[:maxShown-1]
+			hidden = len(order.Items) - len(shown)
+		}
+		for _, it := range shown {
+			fmt.Fprintf(&b, "• %s ×%d\n", it.Name, it.Quantity)
+		}
+		if hidden > 0 {
+			fmt.Fprintf(&b, "• dan %d lainnya\n", hidden)
+		}
+	}
+
+	jkt, _ := time.LoadLocation("Asia/Jakarta")
+	fmt.Fprintf(&b, "\nWaktu: %s\n", order.CreatedAt.In(jkt).Format("02 Jan 2006, 15:04"))
+	fmt.Fprintf(&b, "ID: #%s", shortID(order.ID))
+
+	return b.String()
+}
+
+func formatRupiah(n float64) string {
+	// Format with thousand-separator dots, Indonesian style.
+	whole := int64(n)
+	neg := whole < 0
+	if neg {
+		whole = -whole
+	}
+	s := fmt.Sprintf("%d", whole)
+	var out strings.Builder
+	if neg {
+		out.WriteByte('-')
+	}
+	out.WriteString("Rp ")
+	// Insert dots every 3 digits from the right.
+	start := len(s) % 3
+	if start > 0 {
+		out.WriteString(s[:start])
+		if len(s) > start {
+			out.WriteByte('.')
+		}
+	}
+	for i := start; i < len(s); i += 3 {
+		out.WriteString(s[i : i+3])
+		if i+3 < len(s) {
+			out.WriteByte('.')
+		}
+	}
+	return out.String()
+}
+
+func prettyPayment(p string) string {
+	switch strings.ToLower(p) {
+	case "cash":
+		return "Tunai"
+	case "transfer", "bank_transfer":
+		return "Transfer"
+	case "qris":
+		return "QRIS"
+	case "ewallet", "e-wallet":
+		return "E-Wallet"
+	case "card", "debit", "credit":
+		return "Kartu"
+	case "":
+		return "-"
+	}
+	return p
+}
+
+// shortID returns the first 8 chars of a UUID — readable ID for the owner
+// without exposing the full UUID.
+func shortID(id string) string {
+	if len(id) <= 8 {
+		return strings.ToUpper(id)
+	}
+	return strings.ToUpper(id[:8])
 }
 
 func (s *OrderService) CancelOrder(id string) (*dto.OrderResponse, *dto.ApiError) {
