@@ -209,17 +209,40 @@ func (s *DeviceService) EmergencyApprove(id string) *dto.ApiError {
 
 // ─── WA notification helpers ───
 
-func (s *DeviceService) notifyOwner(dev *entity.TrustedDevice, user *entity.User, baseURL string) {
-	if s.WA == nil || !s.WA.Configured() {
-		s.Log.Warn().Msg("WAHA not configured; security notification skipped")
-		return
+// broadcastToAdmins sends the same text to every active admin/superadmin with
+// a phone number. Returns the list of recipients it successfully reached.
+func (s *DeviceService) broadcastToAdmins(text string) []entity.User {
+	if s.WA == nil || !s.WA.Enabled() {
+		return nil
 	}
-	phone := s.Configs.SecurityNotificationPhone
-	if phone == "" {
-		s.Log.Warn().Msg("SECURITY_NOTIFICATION_PHONE not set; notification skipped")
-		return
+	admins, err := s.AuthR.FindAdmins()
+	if err != nil {
+		s.Log.Error().Err(err).Msg("Failed to load admin list for WA broadcast")
+		return nil
+	}
+	if len(admins) == 0 {
+		s.Log.Warn().Msg("No admin/superadmin with phone found; WA notification skipped")
+		return nil
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	sent := make([]entity.User, 0, len(admins))
+	for _, a := range admins {
+		if err := s.WA.SendText(ctx, a.PhoneNumber, text); err != nil {
+			s.Log.Warn().Err(err).
+				Str("admin_id", a.ID).
+				Str("admin_phone", a.PhoneNumber).
+				Msg("Failed to send WA to admin")
+			continue
+		}
+		sent = append(sent, a)
+	}
+	return sent
+}
+
+func (s *DeviceService) notifyOwner(dev *entity.TrustedDevice, user *entity.User, baseURL string) {
 	// Prefer request-derived URL (works behind Cloudflare + nginx);
 	// fall back to APP_URL env override for setups where auto-detect fails.
 	base := strings.TrimRight(baseURL, "/")
@@ -240,10 +263,8 @@ func (s *DeviceService) notifyOwner(dev *entity.TrustedDevice, user *entity.User
 		rejectURL,
 	)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := s.WA.SendSecurityText(ctx, phone, msg); err != nil {
-		s.Log.Error().Err(err).Msg("Failed to send device approval WA")
+	sent := s.broadcastToAdmins(msg)
+	if len(sent) == 0 {
 		return
 	}
 	now := time.Now()
@@ -265,30 +286,8 @@ func (s *DeviceService) maybeResendNotification(dev *entity.TrustedDevice, user 
 	s.notifyOwner(dev, user, baseURL)
 }
 
-// SendOwnerMessage sends a plain message to the configured owner phone.
-// Used for conversational hints like "Mohon sertakan kode #ABCD".
-func (s *DeviceService) SendOwnerMessage(text string) {
-	if s.WA == nil || !s.WA.Configured() {
-		return
-	}
-	phone := s.Configs.SecurityNotificationPhone
-	if phone == "" {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	_ = s.WA.SendSecurityText(ctx, phone, text)
-}
-
-// SendConfirmation replies to the owner after they approve/reject.
+// SendConfirmation replies to all admins after one of them approves/rejects.
 func (s *DeviceService) SendConfirmation(user *entity.User, approved bool) {
-	if s.WA == nil || !s.WA.Configured() {
-		return
-	}
-	phone := s.Configs.SecurityNotificationPhone
-	if phone == "" {
-		return
-	}
 	name := "device"
 	if user != nil {
 		name = user.FullName
@@ -299,9 +298,7 @@ func (s *DeviceService) SendConfirmation(user *entity.User, approved bool) {
 	} else {
 		msg = fmt.Sprintf("❌ Device untuk %s sudah ditolak.", name)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	_ = s.WA.SendSecurityText(ctx, phone, msg)
+	s.broadcastToAdmins(msg)
 }
 
 // ─── helpers ───

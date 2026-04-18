@@ -16,35 +16,28 @@ import (
 )
 
 type Service struct {
-	receiptEnabled bool
-	configured     bool
-	baseURL        string
-	apiKey         string
-	session        string
-	client         *http.Client
-	log            *zerolog.Logger
+	enabled bool
+	baseURL string
+	apiKey  string
+	session string
+	client  *http.Client
+	log     *zerolog.Logger
 }
 
-func New(baseURL, apiKey, session string, receiptEnabled bool, log *zerolog.Logger) *Service {
-	configured := baseURL != "" && apiKey != ""
+func New(baseURL, apiKey, session string, enabled bool, log *zerolog.Logger) *Service {
 	return &Service{
-		receiptEnabled: receiptEnabled && configured,
-		configured:     configured,
-		baseURL:        strings.TrimRight(baseURL, "/"),
-		apiKey:         apiKey,
-		session:        session,
-		client:         &http.Client{Timeout: 10 * time.Second},
-		log:            log,
+		enabled: enabled && baseURL != "" && apiKey != "",
+		baseURL: strings.TrimRight(baseURL, "/"),
+		apiKey:  apiKey,
+		session: session,
+		client:  &http.Client{Timeout: 10 * time.Second},
+		log:     log,
 	}
 }
 
-// Enabled reports whether receipt sending is configured and turned on.
-func (s *Service) Enabled() bool { return s.receiptEnabled }
-
-// Configured reports whether WAHA is reachable (baseURL + apiKey set),
-// regardless of the receipt toggle. Used by security notifications which
-// must always fire independent of WA_RECEIPT_ENABLED.
-func (s *Service) Configured() bool { return s.configured }
+// Enabled reports whether WA sending is configured and turned on. All WA
+// emissions (receipts + security/transaction notifications) share this flag.
+func (s *Service) Enabled() bool { return s.enabled }
 
 // normalizePhone takes a raw phone (e.g. "08123456789", "+628123...", "628...")
 // and returns the WAHA chatId format "628xxx@c.us". Returns empty string on
@@ -77,27 +70,13 @@ type sendTextReq struct {
 	Session string `json:"session"`
 }
 
-// SendText sends a plain text message to the given phone number, gated by the
-// receipt toggle (WA_RECEIPT_ENABLED). No-op when disabled. Errors are not
-// returned as hard failures; callers should not block checkout flow on delivery.
+// SendText sends a plain text message to the given phone number, gated by
+// WA_RECEIPT_ENABLED (+ WAHA configured). No-op when disabled. Errors are
+// not returned as hard failures; callers should not block on delivery.
 func (s *Service) SendText(ctx context.Context, phone, text string) error {
-	if !s.receiptEnabled {
+	if !s.enabled {
 		return nil
 	}
-	return s.send(ctx, phone, text)
-}
-
-// SendSecurityText sends a message bypassing the receipt toggle — used for
-// device-approval notifications that must fire even when receipts are off.
-// Still a no-op when WAHA itself is not configured.
-func (s *Service) SendSecurityText(ctx context.Context, phone, text string) error {
-	if !s.configured {
-		return nil
-	}
-	return s.send(ctx, phone, text)
-}
-
-func (s *Service) send(ctx context.Context, phone, text string) error {
 	chatID := normalizePhone(phone)
 	if chatID == "" {
 		return fmt.Errorf("invalid phone number: %q", phone)

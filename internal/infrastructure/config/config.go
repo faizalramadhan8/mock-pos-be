@@ -38,8 +38,6 @@ type Config struct {
 	WahaSession      string `koanf:"WAHA_SESSION"`
 	WAReceiptEnabled bool   `koanf:"WA_RECEIPT_ENABLED"`
 
-	SecurityNotificationPhone  string `koanf:"SECURITY_NOTIFICATION_PHONE"`
-	TransactionNotificationEnabled bool `koanf:"TRANSACTION_NOTIFICATION_ENABLED"`
 }
 
 func (c *Config) GetGormAddress() string {

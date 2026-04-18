@@ -242,20 +242,21 @@ func (s *OrderService) sendReceiptWA(order *entity.Order, userID string) {
 	}
 }
 
-// sendTransactionNotificationWA notifies the owner via WhatsApp of a new
-// transaction. Independent of WA_RECEIPT_ENABLED — uses SendSecurityText so
-// the owner is pinged even when customer-receipt sending is off. Gated by
-// TRANSACTION_NOTIFICATION_ENABLED. Runs as a goroutine after checkout.
+// sendTransactionNotificationWA notifies every admin/superadmin (with a phone
+// number on file) of a new transaction. Gated by WA_RECEIPT_ENABLED — the
+// same toggle that governs the member receipt. Runs as a goroutine after
+// checkout, never blocks the response.
 func (s *OrderService) sendTransactionNotificationWA(order *entity.Order, userID string) {
-	if s.Configs == nil || !s.Configs.TransactionNotificationEnabled {
+	if s.WA == nil || !s.WA.Enabled() {
 		return
 	}
-	if s.WA == nil || !s.WA.Configured() {
+	admins, err := s.AuthRepo.FindAdmins()
+	if err != nil {
+		s.Log.Error().Err(err).Msg("Failed to load admin list for transaction WA")
 		return
 	}
-	phone := s.Configs.SecurityNotificationPhone
-	if phone == "" {
-		s.Log.Warn().Msg("SECURITY_NOTIFICATION_PHONE not set; transaction notification skipped")
+	if len(admins) == 0 {
+		s.Log.Warn().Msg("No admin/superadmin with phone found; transaction notification skipped")
 		return
 	}
 
@@ -268,10 +269,13 @@ func (s *OrderService) sendTransactionNotificationWA(order *entity.Order, userID
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if err := s.WA.SendSecurityText(ctx, phone, text); err != nil {
-		s.Log.Warn().Err(err).
-			Str("order_id", order.ID).
-			Msg("Failed to send WA transaction notification")
+	for _, a := range admins {
+		if err := s.WA.SendText(ctx, a.PhoneNumber, text); err != nil {
+			s.Log.Warn().Err(err).
+				Str("order_id", order.ID).
+				Str("admin_id", a.ID).
+				Msg("Failed to send WA transaction notification")
+		}
 	}
 }
 

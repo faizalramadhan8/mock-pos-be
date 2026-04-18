@@ -63,6 +63,20 @@ func (r *AuthRepository) FindAll() ([]entity.User, error) {
 	return users, nil
 }
 
+// FindAdmins returns active users with role admin or superadmin who have a
+// phone number. Used for broadcasting security/transaction notifications to
+// all management-tier users.
+func (r *AuthRepository) FindAdmins() ([]entity.User, error) {
+	var users []entity.User
+	err := r.DB.Where("role IN ? AND phone IS NOT NULL AND phone <> '' AND is_active = ?",
+		[]string{"admin", "superadmin"}, true,
+	).Find(&users).Error
+	if err != nil {
+		return nil, err
+	}
+	return users, nil
+}
+
 func (r *AuthRepository) Update(user *entity.User) error {
 	return r.DB.Save(user).Error
 }
