@@ -22,6 +22,28 @@ type DeviceController struct {
 	Configs *config.Config
 }
 
+// extractBaseURL derives the public-facing base URL from the incoming request.
+// Works for the common setups in this app: direct access, nginx reverse proxy,
+// and Cloudflare Tunnel (which sets the CF-Visitor header to signal https even
+// when the tunnel leg to origin is plain http).
+func extractBaseURL(c *fiber.Ctx) string {
+	host := c.Hostname()
+	if host == "" {
+		return ""
+	}
+	// Cloudflare Tunnel / Cloudflare Proxy: CF-Visitor tells us the client-
+	// side scheme. Most reliable for this deployment.
+	if cv := c.Get("CF-Visitor"); strings.Contains(cv, `"scheme":"https"`) {
+		return "https://" + host
+	}
+	// Standard reverse-proxy chain.
+	if proto := c.Get("X-Forwarded-Proto"); proto != "" {
+		return proto + "://" + host
+	}
+	// Direct TLS or plain HTTP (dev). Protocol() honors ProxyHeader config.
+	return c.Protocol() + "://" + host
+}
+
 func NewDeviceController(ctx context.Context) *DeviceController {
 	logger := ctx.Value(enum.LoggerCtxKey).(*zerolog.Logger)
 	configs := ctx.Value(enum.ConfigCtxKey).(*config.Config)

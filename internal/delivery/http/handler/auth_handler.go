@@ -87,7 +87,7 @@ func (ctrl *AuthController) Login(c *fiber.Ctx) error {
 		})
 	}
 
-	resp, pending, fail := ctrl.AuthService.Login(req, c.Get(fiber.HeaderUserAgent))
+	resp, pending, fail := ctrl.AuthService.Login(req, c.Get(fiber.HeaderUserAgent), extractBaseURL(c))
 	if fail != nil {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
 			Code:    fail.StatusCode.Code,

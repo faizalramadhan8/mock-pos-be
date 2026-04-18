@@ -63,7 +63,7 @@ func IsGatedRole(role enum.Role) bool { return deviceGatedRoles[role] }
 // return HTTP 202 and wait for owner approval.
 // Side effects: creates a pending record + sends WA on first sight, re-sends
 // WA if an existing pending record hasn't been re-notified recently.
-func (s *DeviceService) EnsureApproved(user *entity.User, fingerprint, userAgent string) (*entity.TrustedDevice, bool, *dto.ApiError) {
+func (s *DeviceService) EnsureApproved(user *entity.User, fingerprint, userAgent, baseURL string) (*entity.TrustedDevice, bool, *dto.ApiError) {
 	if fingerprint == "" {
 		return nil, false, &dto.ApiError{
 			StatusCode: fiber.ErrBadRequest,
@@ -83,7 +83,7 @@ func (s *DeviceService) EnsureApproved(user *entity.User, fingerprint, userAgent
 				Message:    "Device ditolak. Hubungi owner.",
 			}
 		case entity.DeviceStatusPending:
-			s.maybeResendNotification(dev, user)
+			s.maybeResendNotification(dev, user, baseURL)
 			return dev, false, nil
 		}
 	}
@@ -107,7 +107,7 @@ func (s *DeviceService) EnsureApproved(user *entity.User, fingerprint, userAgent
 			Message:    "Failed to register device",
 		}
 	}
-	s.notifyOwner(dev, user)
+	s.notifyOwner(dev, user, baseURL)
 	return dev, false, nil
 }
 
@@ -209,7 +209,7 @@ func (s *DeviceService) EmergencyApprove(id string) *dto.ApiError {
 
 // ─── WA notification helpers ───
 
-func (s *DeviceService) notifyOwner(dev *entity.TrustedDevice, user *entity.User) {
+func (s *DeviceService) notifyOwner(dev *entity.TrustedDevice, user *entity.User, baseURL string) {
 	if s.WA == nil || !s.WA.Configured() {
 		s.Log.Warn().Msg("WAHA not configured; security notification skipped")
 		return
@@ -220,9 +220,14 @@ func (s *DeviceService) notifyOwner(dev *entity.TrustedDevice, user *entity.User
 		return
 	}
 
-	base := strings.TrimRight(s.Configs.AppURL, "/")
+	// Prefer request-derived URL (works behind Cloudflare + nginx);
+	// fall back to APP_URL env override for setups where auto-detect fails.
+	base := strings.TrimRight(baseURL, "/")
 	if base == "" {
-		s.Log.Warn().Msg("APP_URL not set; approval links won't be clickable")
+		base = strings.TrimRight(s.Configs.AppURL, "/")
+	}
+	if base == "" {
+		s.Log.Warn().Msg("No base URL (request nor APP_URL); approval links will not be clickable")
 	}
 	approveURL := fmt.Sprintf("%s/api/v1/auth/devices/approve?t=%s", base, dev.ApprovalCode)
 	rejectURL := fmt.Sprintf("%s/api/v1/auth/devices/reject?t=%s", base, dev.ApprovalCode)
@@ -246,7 +251,7 @@ func (s *DeviceService) notifyOwner(dev *entity.TrustedDevice, user *entity.User
 	_ = s.DeviceR.Update(dev)
 }
 
-func (s *DeviceService) maybeResendNotification(dev *entity.TrustedDevice, user *entity.User) {
+func (s *DeviceService) maybeResendNotification(dev *entity.TrustedDevice, user *entity.User, baseURL string) {
 	if dev.LastNotifiedAt != nil && time.Since(*dev.LastNotifiedAt) < notifyCooldown {
 		return
 	}
@@ -257,7 +262,7 @@ func (s *DeviceService) maybeResendNotification(dev *entity.TrustedDevice, user 
 		dev.CodeExpiresAt = &expires
 		_ = s.DeviceR.Update(dev)
 	}
-	s.notifyOwner(dev, user)
+	s.notifyOwner(dev, user, baseURL)
 }
 
 // SendOwnerMessage sends a plain message to the configured owner phone.

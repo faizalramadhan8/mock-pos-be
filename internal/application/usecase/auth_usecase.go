@@ -127,7 +127,7 @@ func (s *AuthService) Register(req dto.RegisterRequest) (*dto.RegisterResponse, 
 	return response, nil
 }
 
-func (s *AuthService) Login(req dto.LoginRequest, userAgent string) (*dto.LoginResponse, *dto.DevicePendingResponse, *dto.ApiError) {
+func (s *AuthService) Login(req dto.LoginRequest, userAgent, baseURL string) (*dto.LoginResponse, *dto.DevicePendingResponse, *dto.ApiError) {
 	user, err := s.Repo.FindByEmail(req.Email)
 	if err != nil {
 		s.Log.Error().Msg(err.Error())
@@ -155,7 +155,7 @@ func (s *AuthService) Login(req dto.LoginRequest, userAgent string) (*dto.LoginR
 	// Device binding check — only gates cashier/staff/user roles.
 	// superadmin/admin bypass so owner keeps emergency access.
 	if IsGatedRole(user.Role) {
-		dev, approved, fail := s.Device.EnsureApproved(user, req.DeviceFingerprint, userAgent)
+		dev, approved, fail := s.Device.EnsureApproved(user, req.DeviceFingerprint, userAgent, baseURL)
 		if fail != nil {
 			return nil, nil, fail
 		}
