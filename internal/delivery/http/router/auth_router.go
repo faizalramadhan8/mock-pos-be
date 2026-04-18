@@ -22,6 +22,7 @@ func UseAuthRouter(ctx context.Context, r fiber.Router) {
 	authGroup.Post("/refresh", ctrl.RefreshToken)
 	authGroup.Post("/logout", ctrl.Logout)
 	authGroup.Get("/session", auth.AllowAll(), ctrl.GetProfile)
+	authGroup.Post("/change-password", auth.AllowAll(), ctrl.ChangePassword)
 	authGroup.Post("/logout-all", auth.AllowSuperAdmin(), ctrl.LogoutAll)
 
 	users := r.Group("/users", auth.AllowAdmins())

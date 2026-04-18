@@ -542,6 +542,28 @@ func (s *AuthService) ResetPassword(id string, req dto.ResetPasswordRequest) *dt
 	return nil
 }
 
+func (s *AuthService) ChangePassword(userID string, req dto.ChangePasswordRequest) *dto.ApiError {
+	user, err := s.Repo.FindByID(userID)
+	if err != nil {
+		return &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "User not found"}
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.CurrentPassword)); err != nil {
+		return &dto.ApiError{StatusCode: fiber.ErrUnauthorized, Message: "Password lama salah"}
+	}
+
+	hashed, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to hash password"}
+	}
+
+	user.Password = string(hashed)
+	if err := s.Repo.Update(user); err != nil {
+		return &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to update password"}
+	}
+	return nil
+}
+
 func (s *AuthService) DeleteUser(id string) *dto.ApiError {
 	if err := s.Repo.Delete(id); err != nil {
 		s.Log.Error().Err(err).Msg("Failed to delete user")

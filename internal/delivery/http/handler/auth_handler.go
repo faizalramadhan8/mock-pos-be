@@ -281,6 +281,21 @@ func (ctrl *AuthController) ToggleUserActive(c *fiber.Ctx) error {
 	})
 }
 
+func (ctrl *AuthController) ChangePassword(c *fiber.Ctx) error {
+	claims := c.Locals("session").(*dto.JWTClaims)
+	var req dto.ChangePasswordRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(dto.ApiResponse{Code: fiber.ErrUnprocessableEntity.Code, Message: fiber.ErrUnprocessableEntity.Message, Error: err.Error()})
+	}
+	if err := util.ValidateRequest(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{Code: fiber.ErrBadRequest.Code, Message: fiber.ErrBadRequest.Message, Error: err})
+	}
+	if fail := ctrl.AuthService.ChangePassword(claims.ID, req); fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Password berhasil diubah"})
+}
+
 func (ctrl *AuthController) ResetPassword(c *fiber.Ctx) error {
 	id := c.Params("id")
 	var req dto.ResetPasswordRequest
