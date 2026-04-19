@@ -20,7 +20,11 @@ func (r *MemberRepository) FindAll(search string, limit, offset int) ([]entity.M
 
 	query := r.DB.Model(&entity.Member{})
 	if search != "" {
-		query = query.Where("name LIKE ? OR phone LIKE ?", "%"+search+"%", "%"+search+"%")
+		like := "%" + search + "%"
+		query = query.Where(
+			"name LIKE ? OR phone LIKE ? OR member_number LIKE ?",
+			like, like, like,
+		)
 	}
 	query.Count(&total)
 

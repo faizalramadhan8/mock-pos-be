@@ -1,15 +1,19 @@
 package dto
 
 type CreateMemberRequest struct {
-	Name  string `json:"name" validate:"required"`
-	Phone string `json:"phone" validate:"required"`
+	Name         string `json:"name" validate:"required"`
+	Phone        string `json:"phone" validate:"required"`
+	Address      string `json:"address" validate:"omitempty"`
+	MemberNumber string `json:"member_number" validate:"omitempty,max=50"`
 }
 
 type MemberResponse struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Phone     string `json:"phone"`
-	CreatedAt string `json:"created_at"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Phone        string `json:"phone"`
+	Address      string `json:"address,omitempty"`
+	MemberNumber string `json:"member_number,omitempty"`
+	CreatedAt    string `json:"created_at"`
 }
 
 type MemberStatsRequest struct {

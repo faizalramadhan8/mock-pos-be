@@ -28,8 +28,8 @@ func UseAuthRouter(ctx context.Context, r fiber.Router) {
 	// trying to login). Approve/reject links are tapped by owner from
 	// WhatsApp; auth is via the single-use token embedded in the URL.
 	authGroup.Get("/devices/status", deviceCtrl.GetStatus)
-	authGroup.Get("/devices/approve", deviceCtrl.ApproveLink)
-	authGroup.Get("/devices/reject", deviceCtrl.RejectLink)
+	authGroup.Get("/devices/approve", deviceCtrl.Approve)
+	authGroup.Get("/devices/reject", deviceCtrl.Reject)
 
 	users := r.Group("/users", auth.AllowAdmins())
 	users.Get("/", ctrl.GetAllUsers)

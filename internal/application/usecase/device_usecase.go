@@ -252,8 +252,8 @@ func (s *DeviceService) notifyOwner(dev *entity.TrustedDevice, user *entity.User
 	if base == "" {
 		s.Log.Warn().Msg("No base URL (request nor APP_URL); approval links will not be clickable")
 	}
-	approveURL := fmt.Sprintf("%s/api/v1/auth/devices/approve?t=%s", base, dev.ApprovalCode)
-	rejectURL := fmt.Sprintf("%s/api/v1/auth/devices/reject?t=%s", base, dev.ApprovalCode)
+	approveURL := fmt.Sprintf("%s/approve?t=%s", base, dev.ApprovalCode)
+	rejectURL := fmt.Sprintf("%s/reject?t=%s", base, dev.ApprovalCode)
 
 	msg := fmt.Sprintf(
 		"🔒 *Toko Bahan Kue Santi — Security*\n\n%s mencoba login dari device baru.\nWaktu: %s\n\n✅ Approve: %s\n❌ Tolak: %s\n\nLink berlaku 10 menit.",

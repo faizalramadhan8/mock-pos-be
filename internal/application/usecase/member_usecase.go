@@ -45,21 +45,18 @@ func (s *MemberService) GetAll(search string, page, limit int) ([]dto.MemberResp
 
 	var result []dto.MemberResponse
 	for _, m := range members {
-		result = append(result, dto.MemberResponse{
-			ID:        m.ID,
-			Name:      m.Name,
-			Phone:     m.Phone,
-			CreatedAt: m.CreatedAt.Format(time.RFC3339),
-		})
+		result = append(result, toMemberResponse(&m))
 	}
 	return result, total, nil
 }
 
 func (s *MemberService) Create(req dto.CreateMemberRequest) (*dto.MemberResponse, *dto.ApiError) {
 	member := &entity.Member{
-		ID:    uuid.New().String(),
-		Name:  req.Name,
-		Phone: req.Phone,
+		ID:           uuid.New().String(),
+		Name:         req.Name,
+		Phone:        req.Phone,
+		Address:      req.Address,
+		MemberNumber: req.MemberNumber,
 	}
 
 	if err := s.Repo.Create(member); err != nil {
@@ -67,12 +64,8 @@ func (s *MemberService) Create(req dto.CreateMemberRequest) (*dto.MemberResponse
 		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to create member"}
 	}
 
-	return &dto.MemberResponse{
-		ID:        member.ID,
-		Name:      member.Name,
-		Phone:     member.Phone,
-		CreatedAt: member.CreatedAt.Format(time.RFC3339),
-	}, nil
+	resp := toMemberResponse(member)
+	return &resp, nil
 }
 
 func (s *MemberService) SearchByPhone(phone string) (*dto.MemberResponse, *dto.ApiError) {
@@ -80,12 +73,19 @@ func (s *MemberService) SearchByPhone(phone string) (*dto.MemberResponse, *dto.A
 	if err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Member not found"}
 	}
-	return &dto.MemberResponse{
-		ID:        member.ID,
-		Name:      member.Name,
-		Phone:     member.Phone,
-		CreatedAt: member.CreatedAt.Format(time.RFC3339),
-	}, nil
+	resp := toMemberResponse(member)
+	return &resp, nil
+}
+
+func toMemberResponse(m *entity.Member) dto.MemberResponse {
+	return dto.MemberResponse{
+		ID:           m.ID,
+		Name:         m.Name,
+		Phone:        m.Phone,
+		Address:      m.Address,
+		MemberNumber: m.MemberNumber,
+		CreatedAt:    m.CreatedAt.Format(time.RFC3339),
+	}
 }
 
 func (s *MemberService) Delete(id string) *dto.ApiError {
