@@ -255,8 +255,18 @@ func (s *DeviceService) notifyOwner(dev *entity.TrustedDevice, user *entity.User
 	approveURL := fmt.Sprintf("%s/approve?t=%s", base, dev.ApprovalCode)
 	rejectURL := fmt.Sprintf("%s/reject?t=%s", base, dev.ApprovalCode)
 
+	// URL wajib berdiri di baris sendiri supaya WhatsApp mobile (Android/iOS)
+	// auto-link dengan benar — kalau digabung seperti "Approve: <url>" kadang
+	// parser mobile memperlakukan sebagai teks biasa.
 	msg := fmt.Sprintf(
-		"🔒 *Toko Bahan Kue Santi — Security*\n\n%s mencoba login dari device baru.\nWaktu: %s\n\n✅ Approve: %s\n❌ Tolak: %s\n\nLink berlaku 10 menit.",
+		"🔒 *Toko Bahan Kue Santi — Security*\n\n"+
+			"%s mencoba login dari device baru.\n"+
+			"Waktu: %s\n\n"+
+			"Klik untuk APPROVE (kasir bisa masuk):\n"+
+			"%s\n\n"+
+			"Klik untuk TOLAK (kasir gagal masuk):\n"+
+			"%s\n\n"+
+			"Link berlaku 10 menit.",
 		user.FullName,
 		time.Now().Format("02 Jan 2006, 15:04"),
 		approveURL,
