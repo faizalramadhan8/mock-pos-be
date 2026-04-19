@@ -20,6 +20,7 @@ func UseMemberRouter(ctx context.Context, r fiber.Router) {
 	members.Get("/search", ctrl.SearchByPhone)
 	members.Get("/:id/stats", auth.AllowAdmins(), ctrl.GetStats)
 	members.Post("/", ctrl.Create)
+	members.Put("/:id", ctrl.Update)
 	members.Delete("/:id", ctrl.Delete)
 }
 

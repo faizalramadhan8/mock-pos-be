@@ -54,6 +54,10 @@ func (r *MemberRepository) Create(member *entity.Member) error {
 	return r.DB.Create(member).Error
 }
 
+func (r *MemberRepository) Update(member *entity.Member) error {
+	return r.DB.Save(member).Error
+}
+
 func (r *MemberRepository) Delete(id string) error {
 	return r.DB.Delete(&entity.Member{}, "id = ?", id).Error
 }

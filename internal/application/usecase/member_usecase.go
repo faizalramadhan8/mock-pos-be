@@ -88,6 +88,30 @@ func toMemberResponse(m *entity.Member) dto.MemberResponse {
 	}
 }
 
+func (s *MemberService) Update(id string, req dto.UpdateMemberRequest) (*dto.MemberResponse, *dto.ApiError) {
+	member, err := s.Repo.FindByID(id)
+	if err != nil {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Member not found"}
+	}
+
+	if req.Name != "" {
+		member.Name = req.Name
+	}
+	if req.Phone != "" {
+		member.Phone = req.Phone
+	}
+	member.Address = req.Address
+	member.MemberNumber = req.MemberNumber
+
+	if err := s.Repo.Update(member); err != nil {
+		s.Log.Error().Err(err).Msg("Failed to update member")
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to update member"}
+	}
+
+	resp := toMemberResponse(member)
+	return &resp, nil
+}
+
 func (s *MemberService) Delete(id string) *dto.ApiError {
 	if err := s.Repo.Delete(id); err != nil {
 		return &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to delete member"}

@@ -7,6 +7,13 @@ type CreateMemberRequest struct {
 	MemberNumber string `json:"member_number" validate:"omitempty,max=50"`
 }
 
+type UpdateMemberRequest struct {
+	Name         string `json:"name" validate:"omitempty,min=1"`
+	Phone        string `json:"phone" validate:"omitempty"`
+	Address      string `json:"address" validate:"omitempty"`
+	MemberNumber string `json:"member_number" validate:"omitempty,max=50"`
+}
+
 type MemberResponse struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`

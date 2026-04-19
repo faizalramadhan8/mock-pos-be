@@ -90,6 +90,23 @@ func (ctrl *MemberController) GetStats(c *fiber.Ctx) error {
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "successfully", Body: stats})
 }
 
+func (ctrl *MemberController) Update(c *fiber.Ctx) error {
+	id := c.Params("id")
+	var req dto.UpdateMemberRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(dto.ApiResponse{Code: fiber.ErrUnprocessableEntity.Code, Message: fiber.ErrUnprocessableEntity.Message, Error: err.Error()})
+	}
+	if err := util.ValidateRequest(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{Code: fiber.ErrBadRequest.Code, Message: fiber.ErrBadRequest.Message, Error: err})
+	}
+
+	resp, fail := ctrl.Service.Update(id, req)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "successfully", Body: resp})
+}
+
 func (ctrl *MemberController) Delete(c *fiber.Ctx) error {
 	id := c.Params("id")
 	if fail := ctrl.Service.Delete(id); fail != nil {
