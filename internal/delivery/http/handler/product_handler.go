@@ -30,10 +30,11 @@ func NewProductController(ctx context.Context) *ProductController {
 func (ctrl *ProductController) GetAll(c *fiber.Ctx) error {
 	search := c.Query("search", "")
 	categoryID := c.Query("category_id", "")
+	supplierID := c.Query("supplier_id", "")
 	page, _ := strconv.Atoi(c.Query("page", "1"))
 	limit, _ := strconv.Atoi(c.Query("limit", "50"))
 
-	products, total, fail := ctrl.Service.GetAll(search, categoryID, page, limit)
+	products, total, fail := ctrl.Service.GetAll(search, categoryID, supplierID, page, limit)
 	if fail != nil {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
 	}

@@ -26,6 +26,8 @@ type Product struct {
 	NameID        string         `gorm:"column:name_id;type:varchar(200);not null" json:"name_id"`
 	CategoryID    string         `gorm:"type:varchar(36);not null" json:"category_id"`
 	Category      *Category      `gorm:"foreignKey:CategoryID" json:"category,omitempty"`
+	SupplierID    *string        `gorm:"type:varchar(36);null" json:"supplier_id,omitempty"`
+	Supplier      *Supplier      `gorm:"foreignKey:SupplierID" json:"supplier,omitempty"`
 	PurchasePrice float64        `gorm:"type:decimal(15,2);not null;default:0" json:"purchase_price"`
 	SellingPrice  float64        `gorm:"type:decimal(15,2);not null;default:0" json:"selling_price"`
 	MemberPrice   *float64       `gorm:"type:decimal(15,2);null" json:"member_price,omitempty"`

@@ -6,6 +6,7 @@ type CreateProductRequest struct {
 	Name          string   `json:"name" validate:"required"`
 	NameID        string   `json:"name_id"`
 	CategoryID    string   `json:"category_id" validate:"required"`
+	SupplierID    *string  `json:"supplier_id,omitempty"`
 	PurchasePrice float64  `json:"purchase_price" validate:"min=0"`
 	SellingPrice  float64  `json:"selling_price" validate:"min=0"`
 	MemberPrice   *float64 `json:"member_price,omitempty"`
@@ -20,6 +21,7 @@ type UpdateProductRequest struct {
 	Name          string   `json:"name" validate:"omitempty"`
 	NameID        string   `json:"name_id"`
 	CategoryID    string   `json:"category_id"`
+	SupplierID    *string  `json:"supplier_id,omitempty"`
 	PurchasePrice float64  `json:"purchase_price"`
 	SellingPrice  float64  `json:"selling_price"`
 	MemberPrice   *float64 `json:"member_price,omitempty"`
@@ -44,6 +46,8 @@ type ProductResponse struct {
 	NameID        string            `json:"name_id"`
 	CategoryID    string            `json:"category_id"`
 	Category      *CategoryResponse `json:"category,omitempty"`
+	SupplierID    *string           `json:"supplier_id,omitempty"`
+	Supplier      *SupplierResponse `json:"supplier,omitempty"`
 	PurchasePrice float64           `json:"purchase_price"`
 	SellingPrice  float64           `json:"selling_price"`
 	MemberPrice   *float64          `json:"member_price,omitempty"`

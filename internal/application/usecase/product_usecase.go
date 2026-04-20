@@ -27,7 +27,7 @@ func NewProductService(ctx context.Context, db *gorm.DB) *ProductService {
 	}
 }
 
-func (s *ProductService) GetAll(search, categoryID string, page, limit int) ([]dto.ProductResponse, int64, *dto.ApiError) {
+func (s *ProductService) GetAll(search, categoryID, supplierID string, page, limit int) ([]dto.ProductResponse, int64, *dto.ApiError) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -36,7 +36,7 @@ func (s *ProductService) GetAll(search, categoryID string, page, limit int) ([]d
 	}
 	offset := (page - 1) * limit
 
-	products, total, err := s.Repo.FindAll(search, categoryID, limit, offset)
+	products, total, err := s.Repo.FindAll(search, categoryID, supplierID, limit, offset)
 	if err != nil {
 		s.Log.Error().Err(err).Msg("Failed to fetch products")
 		return nil, 0, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to fetch products"}
@@ -97,6 +97,7 @@ func (s *ProductService) Create(req dto.CreateProductRequest) (*dto.ProductRespo
 		Name:          req.Name,
 		NameID:        req.NameID,
 		CategoryID:    req.CategoryID,
+		SupplierID:    req.SupplierID,
 		PurchasePrice: req.PurchasePrice,
 		SellingPrice:  req.SellingPrice,
 		MemberPrice:   req.MemberPrice,
@@ -139,6 +140,14 @@ func (s *ProductService) Update(id string, req dto.UpdateProductRequest) (*dto.P
 	}
 	if req.CategoryID != "" {
 		product.CategoryID = req.CategoryID
+	}
+	// SupplierID: pointer — explicit null clears it, value sets it
+	if req.SupplierID != nil {
+		if *req.SupplierID == "" {
+			product.SupplierID = nil
+		} else {
+			product.SupplierID = req.SupplierID
+		}
 	}
 	if req.PurchasePrice > 0 {
 		product.PurchasePrice = req.PurchasePrice
@@ -236,6 +245,7 @@ func (s *ProductService) toResponse(p *entity.Product) dto.ProductResponse {
 		Name:          p.Name,
 		NameID:        p.NameID,
 		CategoryID:    p.CategoryID,
+		SupplierID:    p.SupplierID,
 		PurchasePrice: p.PurchasePrice,
 		SellingPrice:  p.SellingPrice,
 		MemberPrice:   p.MemberPrice,
@@ -256,6 +266,17 @@ func (s *ProductService) toResponse(p *entity.Product) dto.ProductResponse {
 			Color:  p.Category.Color,
 		}
 		resp.Category = &cat
+	}
+	if p.Supplier != nil {
+		sup := dto.SupplierResponse{
+			ID:        p.Supplier.ID,
+			Name:      p.Supplier.Name,
+			Phone:     p.Supplier.Phone,
+			Email:     p.Supplier.Email,
+			Address:   p.Supplier.Address,
+			CreatedAt: p.Supplier.CreatedAt.Format(time.RFC3339),
+		}
+		resp.Supplier = &sup
 	}
 	return resp
 }

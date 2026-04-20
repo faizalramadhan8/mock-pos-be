@@ -14,7 +14,7 @@ func NewProductRepository(ctx context.Context, db *gorm.DB) *ProductRepository {
 	return &ProductRepository{DB: db}
 }
 
-func (r *ProductRepository) FindAll(search, categoryID string, limit, offset int) ([]entity.Product, int64, error) {
+func (r *ProductRepository) FindAll(search, categoryID, supplierID string, limit, offset int) ([]entity.Product, int64, error) {
 	var products []entity.Product
 	var total int64
 
@@ -25,9 +25,12 @@ func (r *ProductRepository) FindAll(search, categoryID string, limit, offset int
 	if categoryID != "" {
 		query = query.Where("category_id = ?", categoryID)
 	}
+	if supplierID != "" {
+		query = query.Where("supplier_id = ?", supplierID)
+	}
 	query.Count(&total)
 
-	if err := query.Preload("Category").Order("created_at DESC").Limit(limit).Offset(offset).Find(&products).Error; err != nil {
+	if err := query.Preload("Category").Preload("Supplier").Order("created_at DESC").Limit(limit).Offset(offset).Find(&products).Error; err != nil {
 		return nil, 0, err
 	}
 	return products, total, nil
@@ -35,7 +38,7 @@ func (r *ProductRepository) FindAll(search, categoryID string, limit, offset int
 
 func (r *ProductRepository) FindByID(id string) (*entity.Product, error) {
 	var product entity.Product
-	if err := r.DB.Preload("Category").Where("id = ?", id).First(&product).Error; err != nil {
+	if err := r.DB.Preload("Category").Preload("Supplier").Where("id = ?", id).First(&product).Error; err != nil {
 		return nil, err
 	}
 	return &product, nil
@@ -43,7 +46,7 @@ func (r *ProductRepository) FindByID(id string) (*entity.Product, error) {
 
 func (r *ProductRepository) FindBySKU(sku string) (*entity.Product, error) {
 	var product entity.Product
-	if err := r.DB.Preload("Category").Where("sku = ?", sku).First(&product).Error; err != nil {
+	if err := r.DB.Preload("Category").Preload("Supplier").Where("sku = ?", sku).First(&product).Error; err != nil {
 		return nil, err
 	}
 	return &product, nil
@@ -51,7 +54,7 @@ func (r *ProductRepository) FindBySKU(sku string) (*entity.Product, error) {
 
 func (r *ProductRepository) FindLowStock() ([]entity.Product, error) {
 	var products []entity.Product
-	if err := r.DB.Preload("Category").Where("stock <= min_stock AND is_active = 1").Find(&products).Error; err != nil {
+	if err := r.DB.Preload("Category").Preload("Supplier").Where("stock <= min_stock AND is_active = 1").Find(&products).Error; err != nil {
 		return nil, err
 	}
 	return products, nil
