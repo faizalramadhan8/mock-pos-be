@@ -19,16 +19,18 @@ func FormatReceipt(order *entity.Order, storeName, cashierName string) string {
 	}
 	var b strings.Builder
 
-	fmt.Fprintf(&b, "🧾 *%s*\n", storeName)
-	fmt.Fprintf(&b, "Struk #%s\n", order.ID)
-	fmt.Fprintf(&b, "%s\n", order.CreatedAt.In(jktLoc()).Format("02 Jan 2006 · 15:04"))
+	fmt.Fprintf(&b, "*%s*\n", strings.ToUpper(storeName))
+	fmt.Fprintf(&b, "_Struk Pembelian_\n\n")
+	fmt.Fprintf(&b, "Tanggal: %s\n", order.CreatedAt.In(jktLoc()).Format("02 Jan 2006, 15:04"))
+	fmt.Fprintf(&b, "ID: #%s\n", shortOrderID(order.ID))
 	b.WriteString("─────────────────\n")
 
 	var memberSavings float64
+	fmt.Fprintf(&b, "Item (%d):\n", len(order.Items))
 	for _, item := range order.Items {
 		lineTotal := item.UnitPrice * float64(item.Quantity)
 		fmt.Fprintf(&b, "• %s\n", item.Name)
-		fmt.Fprintf(&b, "  %dx %s = %s\n",
+		fmt.Fprintf(&b, "   %d × %s = %s\n",
 			item.Quantity,
 			rp(item.UnitPrice),
 			rp(lineTotal),
@@ -36,13 +38,13 @@ func FormatReceipt(order *entity.Order, storeName, cashierName string) string {
 		if item.RegularPrice != nil && *item.RegularPrice > item.UnitPrice {
 			saved := (*item.RegularPrice - item.UnitPrice) * float64(item.Quantity)
 			memberSavings += saved
-			fmt.Fprintf(&b, "  _(reguler %s, hemat %s)_\n",
-				rp(*item.RegularPrice),
+			fmt.Fprintf(&b, "   _(harga member, hemat %s dari %s)_\n",
 				rp(saved),
+				rp(*item.RegularPrice),
 			)
 		}
 		if item.DiscountAmount > 0 {
-			fmt.Fprintf(&b, "  _diskon: -%s_\n", rp(item.DiscountAmount))
+			fmt.Fprintf(&b, "   _diskon: -%s_\n", rp(item.DiscountAmount))
 		}
 	}
 	b.WriteString("─────────────────\n")
@@ -92,6 +94,15 @@ func rp(v float64) string {
 		return "Rp -" + string(out)
 	}
 	return "Rp " + string(out)
+}
+
+// shortOrderID returns the last 8 characters of an order ID, uppercased.
+// Used for customer-facing receipts where the full UUID is too long.
+func shortOrderID(id string) string {
+	if len(id) <= 8 {
+		return strings.ToUpper(id)
+	}
+	return strings.ToUpper(id[len(id)-8:])
 }
 
 func jktLoc() *time.Location {
