@@ -90,6 +90,7 @@ func (s *OrderService) Create(req dto.CreateOrderRequest, userID string) (*dto.O
 		Payment:            req.Payment,
 		Status:             "completed",
 		Customer:           req.Customer,
+		CustomerPhone:      req.CustomerPhone,
 		MemberID:           req.MemberID,
 		PaymentProof:       req.PaymentProof,
 		OrderDiscountType:  req.OrderDiscountType,
@@ -107,6 +108,7 @@ func (s *OrderService) Create(req dto.CreateOrderRequest, userID string) (*dto.O
 			Quantity:       item.Quantity,
 			UnitType:       item.UnitType,
 			UnitPrice:      item.UnitPrice,
+			PurchasePrice:  item.PurchasePrice,
 			RegularPrice:   item.RegularPrice,
 			DiscountType:   item.DiscountType,
 			DiscountValue:  item.DiscountValue,
@@ -133,6 +135,15 @@ func (s *OrderService) Create(req dto.CreateOrderRequest, userID string) (*dto.O
 			}
 			orderItem.RegularPrice = &rp
 		}
+
+		// Snapshot purchase price at sale time for accurate profit reporting
+		// (owner dashboard shows GROSS vs NET = revenue - COGS). If the
+		// product purchase price changes later, historical profit stays correct.
+		purchase := product.PurchasePrice
+		if orderItem.UnitType == "box" && product.QtyPerBox > 0 {
+			purchase = product.PurchasePrice * float64(product.QtyPerBox)
+		}
+		orderItem.PurchasePrice = purchase
 
 		order.Items = append(order.Items, orderItem)
 
@@ -187,8 +198,14 @@ func (s *OrderService) ResendReceiptWA(orderID, userID string) *dto.ApiError {
 	if err != nil {
 		return &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Order not found"}
 	}
-	if order.Member == nil || order.Member.Phone == "" {
-		return &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Order is not linked to a member with a phone number"}
+	phone := ""
+	if order.Member != nil && order.Member.Phone != "" {
+		phone = order.Member.Phone
+	} else if order.CustomerPhone != "" {
+		phone = order.CustomerPhone
+	}
+	if phone == "" {
+		return &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Order has no phone number to send to"}
 	}
 
 	storeName := "Toko Bahan Kue Santi"
@@ -203,7 +220,7 @@ func (s *OrderService) ResendReceiptWA(orderID, userID string) *dto.ApiError {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if sendErr := s.WA.SendText(ctx, order.Member.Phone, text); sendErr != nil {
+	if sendErr := s.WA.SendText(ctx, phone, text); sendErr != nil {
 		s.Log.Warn().Err(sendErr).Str("order_id", order.ID).Msg("WA resend failed")
 		return &dto.ApiError{StatusCode: fiber.ErrBadGateway, Message: "Failed to send WhatsApp receipt: " + sendErr.Error()}
 	}
@@ -217,7 +234,16 @@ func (s *OrderService) sendReceiptWA(order *entity.Order, userID string) {
 	if s.WA == nil || !s.WA.Enabled() {
 		return
 	}
-	if order.Member == nil || order.Member.Phone == "" {
+
+	// Prefer member phone; fall back to customer_phone (non-member who
+	// provided a number at checkout).
+	phone := ""
+	if order.Member != nil && order.Member.Phone != "" {
+		phone = order.Member.Phone
+	} else if order.CustomerPhone != "" {
+		phone = order.CustomerPhone
+	}
+	if phone == "" {
 		return
 	}
 
@@ -234,10 +260,10 @@ func (s *OrderService) sendReceiptWA(order *entity.Order, userID string) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if err := s.WA.SendText(ctx, order.Member.Phone, text); err != nil {
+	if err := s.WA.SendText(ctx, phone, text); err != nil {
 		s.Log.Warn().Err(err).
 			Str("order_id", order.ID).
-			Str("member_phone", order.Member.Phone).
+			Str("recipient_phone", phone).
 			Msg("Failed to send WA receipt")
 	}
 }
@@ -284,9 +310,9 @@ func (s *OrderService) sendTransactionNotificationWA(order *entity.Order, userID
 func formatTransactionNotification(order *entity.Order, cashierName string) string {
 	var b strings.Builder
 
-	fmt.Fprintf(&b, "💰 *Transaksi Baru*\n\n")
+	fmt.Fprintf(&b, "*TOKO BAHAN KUE SANTI*\n")
+	fmt.Fprintf(&b, "_Transaksi Baru_\n\n")
 	fmt.Fprintf(&b, "Kasir: %s\n", cashierName)
-	fmt.Fprintf(&b, "Total: *%s*\n", formatRupiah(order.Total))
 	fmt.Fprintf(&b, "Pembayaran: %s\n", prettyPayment(order.Payment))
 	if order.Member != nil && order.Member.Name != "" {
 		fmt.Fprintf(&b, "Member: %s\n", order.Member.Name)
@@ -296,7 +322,7 @@ func formatTransactionNotification(order *entity.Order, cashierName string) stri
 
 	if len(order.Items) > 0 {
 		fmt.Fprintf(&b, "\nItem (%d):\n", len(order.Items))
-		const maxShown = 5
+		const maxShown = 10
 		shown := order.Items
 		hidden := 0
 		if len(shown) > maxShown {
@@ -304,12 +330,16 @@ func formatTransactionNotification(order *entity.Order, cashierName string) stri
 			hidden = len(order.Items) - len(shown)
 		}
 		for _, it := range shown {
-			fmt.Fprintf(&b, "• %s ×%d\n", it.Name, it.Quantity)
+			line := float64(it.Quantity) * it.UnitPrice
+			fmt.Fprintf(&b, "• %s\n   %d × %s = %s\n",
+				it.Name, it.Quantity, formatRupiah(it.UnitPrice), formatRupiah(line))
 		}
 		if hidden > 0 {
-			fmt.Fprintf(&b, "• dan %d lainnya\n", hidden)
+			fmt.Fprintf(&b, "• dan %d item lainnya\n", hidden)
 		}
 	}
+
+	fmt.Fprintf(&b, "\n*TOTAL: %s*\n", formatRupiah(order.Total))
 
 	jkt, _ := time.LoadLocation("Asia/Jakarta")
 	fmt.Fprintf(&b, "\nWaktu: %s\n", order.CreatedAt.In(jkt).Format("02 Jan 2006, 15:04"))
@@ -448,6 +478,7 @@ func (s *OrderService) toResponse(o *entity.Order) dto.OrderResponse {
 		Payment:            o.Payment,
 		Status:             o.Status,
 		Customer:           o.Customer,
+		CustomerPhone:      o.CustomerPhone,
 		MemberID:           o.MemberID,
 		PaymentProof:       o.PaymentProof,
 		OrderDiscountType:  o.OrderDiscountType,
@@ -477,6 +508,7 @@ func (s *OrderService) toResponse(o *entity.Order) dto.OrderResponse {
 			Quantity:       item.Quantity,
 			UnitType:       item.UnitType,
 			UnitPrice:      item.UnitPrice,
+			PurchasePrice:  item.PurchasePrice,
 			RegularPrice:   item.RegularPrice,
 			DiscountType:   item.DiscountType,
 			DiscountValue:  item.DiscountValue,

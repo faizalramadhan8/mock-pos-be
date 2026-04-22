@@ -8,6 +8,7 @@ type CreateOrderRequest struct {
 	Total              float64                  `json:"total"`
 	Payment            string                   `json:"payment" validate:"required,oneof=cash card transfer qris"`
 	Customer           string                   `json:"customer"`
+	CustomerPhone      string                   `json:"customer_phone,omitempty"`
 	MemberID           *string                  `json:"member_id,omitempty"`
 	PaymentProof       string                   `json:"payment_proof"`
 	OrderDiscountType  string                   `json:"order_discount_type"`
@@ -21,6 +22,7 @@ type CreateOrderItemRequest struct {
 	Quantity       int      `json:"quantity" validate:"required,min=1"`
 	UnitType       string   `json:"unit_type"`
 	UnitPrice      float64  `json:"unit_price"`
+	PurchasePrice  float64  `json:"purchase_price,omitempty"`
 	RegularPrice   *float64 `json:"regular_price,omitempty"`
 	DiscountType   string   `json:"discount_type"`
 	DiscountValue  float64  `json:"discount_value"`
@@ -43,6 +45,7 @@ type OrderResponse struct {
 	Payment            string              `json:"payment"`
 	Status             string              `json:"status"`
 	Customer           string              `json:"customer,omitempty"`
+	CustomerPhone      string              `json:"customer_phone,omitempty"`
 	MemberID           *string             `json:"member_id,omitempty"`
 	Member             *OrderMemberInfo    `json:"member,omitempty"`
 	MemberSavings      float64             `json:"member_savings,omitempty"`
@@ -61,6 +64,7 @@ type OrderItemResponse struct {
 	Quantity       int      `json:"quantity"`
 	UnitType       string   `json:"unit_type"`
 	UnitPrice      float64  `json:"unit_price"`
+	PurchasePrice  float64  `json:"purchase_price,omitempty"`
 	RegularPrice   *float64 `json:"regular_price,omitempty"`
 	DiscountType   string   `json:"discount_type,omitempty"`
 	DiscountValue  float64  `json:"discount_value,omitempty"`
