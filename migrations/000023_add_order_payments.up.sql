@@ -10,10 +10,11 @@ CREATE TABLE IF NOT EXISTS order_payments (
 );
 
 -- Backfill for existing completed orders so they have at least one payment row
--- (method + full amount). Ignored if the table is empty.
+-- (method + full amount). Ignored if the table is empty. Uses UUID() — the
+-- previous 'bf-' + order_id prefix overflowed the 36-char id column.
 INSERT INTO order_payments (id, order_id, method, amount, created_at)
 SELECT
-    CONCAT('bf-', o.id),
+    UUID(),
     o.id,
     o.payment,
     o.total,
