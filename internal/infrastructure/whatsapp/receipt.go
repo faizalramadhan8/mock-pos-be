@@ -66,7 +66,15 @@ func FormatReceipt(order *entity.Order, storeName, cashierName string) string {
 		fmt.Fprintf(&b, "PPN %.0f%%: %s\n", order.PPNRate, rp(order.PPN))
 	}
 	fmt.Fprintf(&b, "*TOTAL: %s*\n", rp(order.Total))
-	fmt.Fprintf(&b, "Pembayaran: %s\n", strings.ToUpper(order.Payment))
+	// Payment breakdown: if split across multiple methods, list each line.
+	if len(order.Payments) > 1 {
+		fmt.Fprintf(&b, "Pembayaran:\n")
+		for _, p := range order.Payments {
+			fmt.Fprintf(&b, "• %s: %s\n", strings.ToUpper(p.Method), rp(p.Amount))
+		}
+	} else {
+		fmt.Fprintf(&b, "Pembayaran: %s\n", strings.ToUpper(order.Payment))
+	}
 	if cashierName != "" {
 		fmt.Fprintf(&b, "Kasir: %s\n", cashierName)
 	}

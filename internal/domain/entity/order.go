@@ -8,6 +8,7 @@ import (
 type Order struct {
 	ID                 string         `gorm:"type:varchar(36);primary_key;not null" json:"id"`
 	Items              []OrderItem    `gorm:"foreignKey:OrderID" json:"items,omitempty"`
+	Payments           []OrderPayment `gorm:"foreignKey:OrderID" json:"payments,omitempty"`
 	Subtotal           float64        `gorm:"type:decimal(15,2);not null;default:0" json:"subtotal"`
 	PPNRate            float64        `gorm:"column:ppn_rate;type:decimal(5,2);not null;default:11" json:"ppn_rate"`
 	PPN                float64        `gorm:"type:decimal(15,2);not null;default:0" json:"ppn"`
@@ -47,3 +48,18 @@ type OrderItem struct {
 }
 
 func (OrderItem) TableName() string { return "order_items" }
+
+// OrderPayment is one leg of a (possibly split) payment for an order.
+// A single order may have multiple rows — e.g. cash 50.000 + qris 30.000
+// for a total of 80.000. The sum of all payments must be >= order.total;
+// any excess is the customer's change and is not stored here (it's derived
+// at the checkout UI).
+type OrderPayment struct {
+	ID        string    `gorm:"type:varchar(36);primary_key;not null" json:"id"`
+	OrderID   string    `gorm:"type:varchar(36);not null;index" json:"order_id"`
+	Method    string    `gorm:"type:varchar(20);not null" json:"method"`
+	Amount    float64   `gorm:"type:decimal(15,2);not null;default:0" json:"amount"`
+	CreatedAt time.Time `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
+}
+
+func (OrderPayment) TableName() string { return "order_payments" }

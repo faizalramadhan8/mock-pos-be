@@ -22,6 +22,13 @@ func UseOrderRouter(ctx context.Context, r fiber.Router) {
 	orders.Post("/", auth.AllowCashier(), ctrl.Create)
 	orders.Patch("/:id/cancel", auth.AllowAdmins(), ctrl.Cancel)
 	orders.Post("/:id/send-wa", auth.AllowCashier(), ctrl.ResendWA)
+
+	// Pending order flow — kasir can create pending, mark paid, cancel, and
+	// resend invoice. All routes require cashier-level (or higher) access.
+	orders.Post("/pending", auth.AllowCashier(), ctrl.CreatePending)
+	orders.Post("/:id/mark-paid", auth.AllowCashier(), ctrl.MarkAsPaid)
+	orders.Post("/:id/cancel-pending", auth.AllowCashier(), ctrl.CancelPending)
+	orders.Post("/:id/resend-invoice", auth.AllowCashier(), ctrl.ResendPendingInvoice)
 }
 
 func UseInventoryRouter(ctx context.Context, r fiber.Router) {

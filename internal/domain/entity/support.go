@@ -10,7 +10,11 @@ type Member struct {
 	Name         string         `gorm:"type:varchar(200);not null" json:"name"`
 	Phone        string         `gorm:"type:varchar(20);not null" json:"phone"`
 	Address      string         `gorm:"type:text;null" json:"address,omitempty"`
-	MemberNumber string         `gorm:"column:member_number;type:varchar(50);null;uniqueIndex" json:"member_number,omitempty"`
+	// MemberNumber is a pointer so NULL-when-empty plays well with MySQL's
+	// UNIQUE constraint — multiple NULLs are allowed, but multiple empty
+	// strings are not. The kasir "Tambah Member" form does not require a
+	// number, so most members hit this path.
+	MemberNumber *string        `gorm:"column:member_number;type:varchar(50);null;uniqueIndex" json:"member_number,omitempty"`
 	CreatedAt    time.Time      `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
 	UpdatedAt    time.Time      `gorm:"default:current_timestamp()" json:"updated_at,omitempty"`
 	DeletedAt    gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`

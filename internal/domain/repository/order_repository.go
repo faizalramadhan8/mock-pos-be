@@ -24,7 +24,7 @@ func (r *OrderRepository) FindAll(status string, limit, offset int) ([]entity.Or
 	}
 	query.Count(&total)
 
-	if err := query.Preload("Items").Preload("Member").Order("created_at DESC").Limit(limit).Offset(offset).Find(&orders).Error; err != nil {
+	if err := query.Preload("Items").Preload("Payments").Preload("Member").Order("created_at DESC").Limit(limit).Offset(offset).Find(&orders).Error; err != nil {
 		return nil, 0, err
 	}
 	return orders, total, nil
@@ -32,7 +32,7 @@ func (r *OrderRepository) FindAll(status string, limit, offset int) ([]entity.Or
 
 func (r *OrderRepository) FindByID(id string) (*entity.Order, error) {
 	var order entity.Order
-	if err := r.DB.Preload("Items").Preload("Member").Where("id = ?", id).First(&order).Error; err != nil {
+	if err := r.DB.Preload("Items").Preload("Payments").Preload("Member").Where("id = ?", id).First(&order).Error; err != nil {
 		return nil, err
 	}
 	return &order, nil
@@ -40,7 +40,7 @@ func (r *OrderRepository) FindByID(id string) (*entity.Order, error) {
 
 func (r *OrderRepository) FindByDateRange(startDate, endDate string) ([]entity.Order, error) {
 	var orders []entity.Order
-	if err := r.DB.Preload("Items").Preload("Member").Where("DATE(created_at) BETWEEN ? AND ?", startDate, endDate).Order("created_at DESC").Find(&orders).Error; err != nil {
+	if err := r.DB.Preload("Items").Preload("Payments").Preload("Member").Where("DATE(created_at) BETWEEN ? AND ?", startDate, endDate).Order("created_at DESC").Find(&orders).Error; err != nil {
 		return nil, err
 	}
 	return orders, nil

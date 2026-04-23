@@ -51,12 +51,20 @@ func (s *MemberService) GetAll(search string, page, limit int) ([]dto.MemberResp
 }
 
 func (s *MemberService) Create(req dto.CreateMemberRequest) (*dto.MemberResponse, *dto.ApiError) {
+	// Empty member_number → NULL so the UNIQUE constraint allows multiple
+	// members without a number (MySQL permits multiple NULLs in a unique key,
+	// but not multiple empty strings).
+	var memberNumber *string
+	if req.MemberNumber != "" {
+		trimmed := req.MemberNumber
+		memberNumber = &trimmed
+	}
 	member := &entity.Member{
 		ID:           uuid.New().String(),
 		Name:         req.Name,
 		Phone:        req.Phone,
 		Address:      req.Address,
-		MemberNumber: req.MemberNumber,
+		MemberNumber: memberNumber,
 	}
 
 	if err := s.Repo.Create(member); err != nil {
@@ -78,12 +86,16 @@ func (s *MemberService) SearchByPhone(phone string) (*dto.MemberResponse, *dto.A
 }
 
 func toMemberResponse(m *entity.Member) dto.MemberResponse {
+	memberNumber := ""
+	if m.MemberNumber != nil {
+		memberNumber = *m.MemberNumber
+	}
 	return dto.MemberResponse{
 		ID:           m.ID,
 		Name:         m.Name,
 		Phone:        m.Phone,
 		Address:      m.Address,
-		MemberNumber: m.MemberNumber,
+		MemberNumber: memberNumber,
 		CreatedAt:    m.CreatedAt.Format(time.RFC3339),
 	}
 }
@@ -101,7 +113,13 @@ func (s *MemberService) Update(id string, req dto.UpdateMemberRequest) (*dto.Mem
 		member.Phone = req.Phone
 	}
 	member.Address = req.Address
-	member.MemberNumber = req.MemberNumber
+	// Same NULL-when-empty treatment as Create (unique constraint safety).
+	if req.MemberNumber == "" {
+		member.MemberNumber = nil
+	} else {
+		trimmed := req.MemberNumber
+		member.MemberNumber = &trimmed
+	}
 
 	if err := s.Repo.Update(member); err != nil {
 		s.Log.Error().Err(err).Msg("Failed to update member")

@@ -79,6 +79,21 @@ func (s *OrderService) GetByID(id string) (*dto.OrderResponse, *dto.ApiError) {
 }
 
 func (s *OrderService) Create(req dto.CreateOrderRequest, userID string) (*dto.OrderResponse, *dto.ApiError) {
+	// Split-payment validation: if payments are provided, their sum must
+	// cover the order total. If missing (back-compat), fall back to a
+	// single payment with the whole amount.
+	payments := req.Payments
+	if len(payments) == 0 {
+		payments = []dto.CreateOrderPaymentRequest{{Method: req.Payment, Amount: req.Total}}
+	}
+	var paidSum float64
+	for _, p := range payments {
+		paidSum += p.Amount
+	}
+	if paidSum+0.001 < req.Total { // tolerate fp rounding
+		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: fmt.Sprintf("Kurang bayar: total Rp %.0f, diterima Rp %.0f", req.Total, paidSum)}
+	}
+
 	tx := s.DB.Begin()
 
 	order := &entity.Order{
@@ -87,7 +102,7 @@ func (s *OrderService) Create(req dto.CreateOrderRequest, userID string) (*dto.O
 		PPNRate:            req.PPNRate,
 		PPN:                req.PPN,
 		Total:              req.Total,
-		Payment:            req.Payment,
+		Payment:            primaryPaymentMethod(payments),
 		Status:             "completed",
 		Customer:           req.Customer,
 		CustomerPhone:      req.CustomerPhone,
@@ -97,6 +112,14 @@ func (s *OrderService) Create(req dto.CreateOrderRequest, userID string) (*dto.O
 		OrderDiscountValue: req.OrderDiscountValue,
 		OrderDiscount:      req.OrderDiscount,
 		CreatedBy:          userID,
+	}
+	for _, p := range payments {
+		order.Payments = append(order.Payments, entity.OrderPayment{
+			ID:      uuid.New().String(),
+			OrderID: order.ID,
+			Method:  p.Method,
+			Amount:  p.Amount,
+		})
 	}
 
 	for _, item := range req.Items {
@@ -468,6 +491,276 @@ func (s *OrderService) GetRevenueStats() (float64, int64, *dto.ApiError) {
 	return revenue, count, nil
 }
 
+// primaryPaymentMethod picks the "headline" method for the orders.payment
+// column (used for list filters). It returns the method of the largest-amount
+// payment, so a Rp 50k cash + Rp 30k qris split is reported as "cash".
+func primaryPaymentMethod(payments []dto.CreateOrderPaymentRequest) string {
+	if len(payments) == 0 {
+		return "cash"
+	}
+	best := payments[0]
+	for _, p := range payments[1:] {
+		if p.Amount > best.Amount {
+			best = p
+		}
+	}
+	return best.Method
+}
+
+// CreatePending — customer pesan online, kasir input ke POS tapi belum
+// bayar. Stok TIDAK dipotong (hanya dipotong saat MarkAsPaid). WA invoice
+// dengan rincian pembayaran dikirim ke customer_phone (kalau WA aktif).
+func (s *OrderService) CreatePending(req dto.CreatePendingOrderRequest, userID string) (*dto.OrderResponse, *dto.ApiError) {
+	if req.CustomerPhone == "" {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Nomor HP customer wajib diisi untuk pesanan pending"}
+	}
+
+	tx := s.DB.Begin()
+
+	order := &entity.Order{
+		ID:                 uuid.New().String(),
+		Subtotal:           req.Subtotal,
+		PPNRate:            req.PPNRate,
+		PPN:                req.PPN,
+		Total:              req.Total,
+		Payment:            "cash", // placeholder; real method set at MarkAsPaid
+		Status:             "pending",
+		Customer:           req.Customer,
+		CustomerPhone:      req.CustomerPhone,
+		MemberID:           req.MemberID,
+		OrderDiscountType:  req.OrderDiscountType,
+		OrderDiscountValue: req.OrderDiscountValue,
+		OrderDiscount:      req.OrderDiscount,
+		CreatedBy:          userID,
+	}
+
+	for _, item := range req.Items {
+		orderItem := entity.OrderItem{
+			ID:             uuid.New().String(),
+			OrderID:        order.ID,
+			ProductID:      item.ProductID,
+			Name:           item.Name,
+			Quantity:       item.Quantity,
+			UnitType:       item.UnitType,
+			UnitPrice:      item.UnitPrice,
+			PurchasePrice:  item.PurchasePrice,
+			RegularPrice:   item.RegularPrice,
+			DiscountType:   item.DiscountType,
+			DiscountValue:  item.DiscountValue,
+			DiscountAmount: item.DiscountAmount,
+		}
+		if orderItem.UnitType == "" {
+			orderItem.UnitType = "individual"
+		}
+		// Snapshot regular & purchase price (same as Create), but DO NOT
+		// decrement stock — that happens in MarkAsPaid.
+		product, err := s.ProductRepo.FindByID(item.ProductID)
+		if err != nil {
+			tx.Rollback()
+			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Product not found: " + item.ProductID}
+		}
+		if orderItem.RegularPrice == nil {
+			rp := product.SellingPrice
+			if orderItem.UnitType == "box" && product.QtyPerBox > 0 {
+				rp = product.SellingPrice * float64(product.QtyPerBox)
+			}
+			orderItem.RegularPrice = &rp
+		}
+		purchase := product.PurchasePrice
+		if orderItem.UnitType == "box" && product.QtyPerBox > 0 {
+			purchase = product.PurchasePrice * float64(product.QtyPerBox)
+		}
+		orderItem.PurchasePrice = purchase
+		order.Items = append(order.Items, orderItem)
+	}
+
+	if err := tx.Create(order).Error; err != nil {
+		tx.Rollback()
+		s.Log.Error().Err(err).Msg("Failed to create pending order")
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to create pending order"}
+	}
+	tx.Commit()
+
+	created, _ := s.Repo.FindByID(order.ID)
+	if created != nil {
+		order = created
+	}
+
+	// Send WA invoice (bank transfer instructions) to customer — async.
+	go s.sendPendingInvoiceWA(order, req.BankAccountID)
+
+	resp := s.toResponse(order)
+	return &resp, nil
+}
+
+// MarkAsPaid — pending order lunas. Jalankan pengecekan stok + potong stok +
+// FIFO consume batch + kirim WA receipt ke customer + notif admin.
+func (s *OrderService) MarkAsPaid(orderID string, req dto.MarkAsPaidRequest, userID string) (*dto.OrderResponse, *dto.ApiError) {
+	order, err := s.Repo.FindByID(orderID)
+	if err != nil {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Order not found"}
+	}
+	if order.Status != "pending" {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Order is not pending"}
+	}
+
+	var paidSum float64
+	for _, p := range req.Payments {
+		paidSum += p.Amount
+	}
+	if paidSum+0.001 < order.Total {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: fmt.Sprintf("Kurang bayar: total Rp %.0f, diterima Rp %.0f", order.Total, paidSum)}
+	}
+
+	tx := s.DB.Begin()
+
+	// Now decrement stock (was not decremented at pending creation).
+	for _, item := range order.Items {
+		stockDelta := item.Quantity
+		if item.UnitType == "box" {
+			prod, _ := s.ProductRepo.FindByID(item.ProductID)
+			if prod != nil && prod.QtyPerBox > 0 {
+				stockDelta = item.Quantity * prod.QtyPerBox
+			}
+		}
+		var prod entity.Product
+		if err := tx.Where("id = ?", item.ProductID).First(&prod).Error; err != nil {
+			tx.Rollback()
+			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Product not found: " + item.ProductID}
+		}
+		if prod.Stock < stockDelta {
+			tx.Rollback()
+			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Insufficient stock for: " + prod.Name}
+		}
+		if err := tx.Model(&entity.Product{}).Where("id = ?", item.ProductID).
+			Update("stock", gorm.Expr("stock - ?", stockDelta)).Error; err != nil {
+			tx.Rollback()
+			return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to deduct stock"}
+		}
+		s.consumeFIFO(tx, item.ProductID, stockDelta)
+	}
+
+	// Persist payment split
+	for _, p := range req.Payments {
+		if err := tx.Create(&entity.OrderPayment{
+			ID:      uuid.New().String(),
+			OrderID: order.ID,
+			Method:  p.Method,
+			Amount:  p.Amount,
+		}).Error; err != nil {
+			tx.Rollback()
+			return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to save payment"}
+		}
+	}
+
+	// Flip status + primary payment method on the order row.
+	order.Status = "completed"
+	order.Payment = primaryPaymentMethod(req.Payments)
+	if err := tx.Save(order).Error; err != nil {
+		tx.Rollback()
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to update order"}
+	}
+	tx.Commit()
+
+	reloaded, _ := s.Repo.FindByID(order.ID)
+	if reloaded != nil {
+		order = reloaded
+	}
+
+	go s.sendReceiptWA(order, userID)
+	go s.sendTransactionNotificationWA(order, userID)
+
+	resp := s.toResponse(order)
+	return &resp, nil
+}
+
+// CancelPending — order pending dibatalkan. Stok tidak disentuh (memang
+// belum pernah dipotong). Status → cancelled.
+func (s *OrderService) CancelPending(orderID string, userID string) *dto.ApiError {
+	order, err := s.Repo.FindByID(orderID)
+	if err != nil {
+		return &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Order not found"}
+	}
+	if order.Status != "pending" {
+		return &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Hanya pesanan pending yang bisa dibatalkan"}
+	}
+	order.Status = "cancelled"
+	if err := s.Repo.Update(order); err != nil {
+		s.Log.Error().Err(err).Msg("Failed to cancel pending order")
+		return &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to cancel order"}
+	}
+	_ = userID // reserved for future audit log
+	return nil
+}
+
+// ResendPendingInvoiceWA — kirim ulang rincian pembayaran ke customer_phone.
+func (s *OrderService) ResendPendingInvoiceWA(orderID string, bankAccountID string) *dto.ApiError {
+	if s.WA == nil || !s.WA.Enabled() {
+		return &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "WhatsApp receipt is disabled"}
+	}
+	order, err := s.Repo.FindByID(orderID)
+	if err != nil {
+		return &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Order not found"}
+	}
+	if order.Status != "pending" {
+		return &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Order is not pending"}
+	}
+	if order.CustomerPhone == "" {
+		return &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Order has no customer phone"}
+	}
+	s.sendPendingInvoiceWASync(order, bankAccountID)
+	return nil
+}
+
+// sendPendingInvoiceWA — fire-and-forget; sendPendingInvoiceWASync caller.
+func (s *OrderService) sendPendingInvoiceWA(order *entity.Order, bankAccountID string) {
+	s.sendPendingInvoiceWASync(order, bankAccountID)
+}
+
+func (s *OrderService) sendPendingInvoiceWASync(order *entity.Order, bankAccountID string) {
+	if s.WA == nil || !s.WA.Enabled() {
+		return
+	}
+	if order.CustomerPhone == "" {
+		return
+	}
+	storeName := "Toko Bahan Kue Santi"
+	var bankLine string
+	if settings, err := s.SettingsRepo.Get(); err == nil && settings != nil {
+		if settings.StoreName != "" {
+			storeName = settings.StoreName
+		}
+		// BankAccounts is JSON; caller passes an ID — pick matching account or first.
+		bankLine = pickBankAccountLine(settings.BankAccounts, bankAccountID)
+	}
+	text := whatsapp.FormatPendingInvoice(order, storeName, bankLine)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := s.WA.SendText(ctx, order.CustomerPhone, text); err != nil {
+		s.Log.Warn().Err(err).Str("order_id", order.ID).Msg("Pending invoice WA failed")
+	}
+}
+
+// pickBankAccountLine — pick a bank account matching the given ID, or the
+// first available if id is empty / not found. Returns "" if no account
+// configured (caller shows a "bayar di kasir" fallback in the WA message).
+func pickBankAccountLine(accounts []entity.BankAccount, id string) string {
+	if len(accounts) == 0 {
+		return ""
+	}
+	render := func(a entity.BankAccount) string {
+		return strings.TrimSpace(fmt.Sprintf("%s %s a.n. %s", a.BankName, a.AccountNumber, a.AccountHolder))
+	}
+	if id != "" {
+		for _, a := range accounts {
+			if a.ID == id {
+				return render(a)
+			}
+		}
+	}
+	return render(accounts[0])
+}
+
 func (s *OrderService) toResponse(o *entity.Order) dto.OrderResponse {
 	resp := dto.OrderResponse{
 		ID:                 o.ID,
@@ -517,6 +810,13 @@ func (s *OrderService) toResponse(o *entity.Order) dto.OrderResponse {
 	}
 	if o.MemberID != nil && savings > 0 {
 		resp.MemberSavings = savings
+	}
+	for _, p := range o.Payments {
+		resp.Payments = append(resp.Payments, dto.OrderPaymentResponse{
+			ID:     p.ID,
+			Method: p.Method,
+			Amount: p.Amount,
+		})
 	}
 	return resp
 }

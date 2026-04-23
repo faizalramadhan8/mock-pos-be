@@ -16,8 +16,10 @@ go.work
 go.work.sum
 
 # Environment & secrets
+.env
 .env.local
 .env.*.local
+cmd/backend/.env
 *.pem
 *.key
 
