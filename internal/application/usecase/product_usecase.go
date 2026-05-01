@@ -15,15 +15,40 @@ import (
 )
 
 type ProductService struct {
-	Log  *zerolog.Logger
-	Repo *repository.ProductRepository
+	Log         *zerolog.Logger
+	Repo        *repository.ProductRepository
+	HistoryRepo *repository.ProductPriceHistoryRepository
 }
 
 func NewProductService(ctx context.Context, db *gorm.DB) *ProductService {
 	logger := ctx.Value(enum.LoggerCtxKey).(*zerolog.Logger)
 	return &ProductService{
-		Log:  logger,
-		Repo: repository.NewProductRepository(ctx, db),
+		Log:         logger,
+		Repo:        repository.NewProductRepository(ctx, db),
+		HistoryRepo: repository.NewProductPriceHistoryRepository(ctx, db),
+	}
+}
+
+// logPriceChange closes any active row of the given (product, type) and
+// inserts a fresh active row at `now`. Errors are logged but never block the
+// caller — price-history is an audit trail, not a transactional dependency.
+func (s *ProductService) logPriceChange(productID, priceType string, price float64, changedBy *string, note string) {
+	now := time.Now()
+	if err := s.HistoryRepo.CloseActive(productID, priceType, now); err != nil {
+		s.Log.Warn().Err(err).Str("product_id", productID).Str("type", priceType).Msg("price history: close active failed")
+	}
+	row := &entity.ProductPriceHistory{
+		ID:        uuid.New().String(),
+		ProductID: productID,
+		PriceType: priceType,
+		Price:     price,
+		Status:    "active",
+		StartDate: now,
+		ChangedBy: changedBy,
+		Note:      note,
+	}
+	if err := s.HistoryRepo.Create(row); err != nil {
+		s.Log.Warn().Err(err).Str("product_id", productID).Str("type", priceType).Msg("price history: insert failed")
 	}
 }
 
@@ -81,7 +106,7 @@ func (s *ProductService) GetLowStock() ([]dto.ProductResponse, *dto.ApiError) {
 	return result, nil
 }
 
-func (s *ProductService) Create(req dto.CreateProductRequest) (*dto.ProductResponse, *dto.ApiError) {
+func (s *ProductService) Create(req dto.CreateProductRequest, userID string) (*dto.ProductResponse, *dto.ApiError) {
 	exists, err := s.Repo.ExistsBySKU(req.SKU)
 	if err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to check SKU"}
@@ -118,6 +143,18 @@ func (s *ProductService) Create(req dto.CreateProductRequest) (*dto.ProductRespo
 		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to create product"}
 	}
 
+	// Seed price history with the initial regular/purchase/member rows so
+	// subsequent edits already have a closed predecessor to compare against.
+	var changer *string
+	if userID != "" {
+		changer = &userID
+	}
+	s.logPriceChange(product.ID, "regular", product.SellingPrice, changer, "initial")
+	s.logPriceChange(product.ID, "purchase", product.PurchasePrice, changer, "initial")
+	if product.MemberPrice != nil && *product.MemberPrice > 0 {
+		s.logPriceChange(product.ID, "member", *product.MemberPrice, changer, "initial")
+	}
+
 	p, _ := s.Repo.FindByID(product.ID)
 	if p != nil {
 		product = p
@@ -126,10 +163,19 @@ func (s *ProductService) Create(req dto.CreateProductRequest) (*dto.ProductRespo
 	return &resp, nil
 }
 
-func (s *ProductService) Update(id string, req dto.UpdateProductRequest) (*dto.ProductResponse, *dto.ApiError) {
+func (s *ProductService) Update(id string, req dto.UpdateProductRequest, userID string) (*dto.ProductResponse, *dto.ApiError) {
 	product, err := s.Repo.FindByID(id)
 	if err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Product not found"}
+	}
+
+	// Snapshot pre-update prices so we know what actually changed.
+	prevPurchase := product.PurchasePrice
+	prevSelling := product.SellingPrice
+	var prevMember *float64
+	if product.MemberPrice != nil {
+		v := *product.MemberPrice
+		prevMember = &v
 	}
 
 	if req.Name != "" {
@@ -190,6 +236,35 @@ func (s *ProductService) Update(id string, req dto.UpdateProductRequest) (*dto.P
 		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to update product"}
 	}
 
+	// Log price changes (only when value actually moved). Audit trail
+	// is best-effort: failures are logged inside logPriceChange, never block.
+	var changer *string
+	if userID != "" {
+		changer = &userID
+	}
+	if product.PurchasePrice != prevPurchase {
+		s.logPriceChange(product.ID, "purchase", product.PurchasePrice, changer, "")
+	}
+	if product.SellingPrice != prevSelling {
+		s.logPriceChange(product.ID, "regular", product.SellingPrice, changer, "")
+	}
+	memberChanged := false
+	switch {
+	case prevMember == nil && product.MemberPrice != nil:
+		memberChanged = true
+	case prevMember != nil && product.MemberPrice == nil:
+		memberChanged = true
+	case prevMember != nil && product.MemberPrice != nil && *prevMember != *product.MemberPrice:
+		memberChanged = true
+	}
+	if memberChanged {
+		var newMember float64
+		if product.MemberPrice != nil {
+			newMember = *product.MemberPrice
+		}
+		s.logPriceChange(product.ID, "member", newMember, changer, "")
+	}
+
 	resp := s.toResponse(product)
 	return &resp, nil
 }
@@ -235,6 +310,39 @@ func (s *ProductService) ToggleActive(id string) (*dto.ProductResponse, *dto.Api
 
 	resp := s.toResponse(product)
 	return &resp, nil
+}
+
+// GetPriceHistory returns chronological price changes for a product. Optional
+// priceType filter — empty = all (regular + member + purchase).
+func (s *ProductService) GetPriceHistory(productID, priceType string) ([]dto.ProductPriceHistoryResponse, *dto.ApiError) {
+	if _, err := s.Repo.FindByID(productID); err != nil {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Product not found"}
+	}
+	rows, err := s.HistoryRepo.FindByProduct(productID, priceType)
+	if err != nil {
+		s.Log.Error().Err(err).Msg("Failed to fetch price history")
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to fetch price history"}
+	}
+	out := make([]dto.ProductPriceHistoryResponse, 0, len(rows))
+	for _, r := range rows {
+		row := dto.ProductPriceHistoryResponse{
+			ID:        r.ID,
+			ProductID: r.ProductID,
+			PriceType: r.PriceType,
+			Price:     r.Price,
+			Status:    r.Status,
+			StartDate: r.StartDate.Format(time.RFC3339),
+			ChangedBy: r.ChangedBy,
+			Note:      r.Note,
+			CreatedAt: r.CreatedAt.Format(time.RFC3339),
+		}
+		if r.EndDate != nil {
+			s := r.EndDate.Format(time.RFC3339)
+			row.EndDate = &s
+		}
+		out = append(out, row)
+	}
+	return out, nil
 }
 
 func (s *ProductService) toResponse(p *entity.Product) dto.ProductResponse {

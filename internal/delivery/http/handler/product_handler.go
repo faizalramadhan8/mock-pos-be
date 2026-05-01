@@ -86,7 +86,8 @@ func (ctrl *ProductController) Create(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{Code: fiber.ErrBadRequest.Code, Message: fiber.ErrBadRequest.Message, Error: err})
 	}
 
-	resp, fail := ctrl.Service.Create(req)
+	claims := c.Locals("session").(*dto.JWTClaims)
+	resp, fail := ctrl.Service.Create(req, claims.ID)
 	if fail != nil {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
 	}
@@ -100,7 +101,8 @@ func (ctrl *ProductController) Update(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusUnprocessableEntity).JSON(dto.ApiResponse{Code: fiber.ErrUnprocessableEntity.Code, Message: fiber.ErrUnprocessableEntity.Message, Error: err.Error()})
 	}
 
-	resp, fail := ctrl.Service.Update(id, req)
+	claims := c.Locals("session").(*dto.JWTClaims)
+	resp, fail := ctrl.Service.Update(id, req, claims.ID)
 	if fail != nil {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
 	}
@@ -130,6 +132,16 @@ func (ctrl *ProductController) Delete(c *fiber.Ctx) error {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
 	}
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Product deleted successfully"})
+}
+
+func (ctrl *ProductController) GetPriceHistory(c *fiber.Ctx) error {
+	id := c.Params("id")
+	priceType := c.Query("price_type", "")
+	rows, fail := ctrl.Service.GetPriceHistory(id, priceType)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "successfully", Body: rows})
 }
 
 func (ctrl *ProductController) ToggleActive(c *fiber.Ctx) error {

@@ -667,7 +667,10 @@ func (s *OrderService) MarkAsPaid(orderID string, req dto.MarkAsPaidRequest, use
 		order = reloaded
 	}
 
-	go s.sendReceiptWA(order, userID)
+	// Owner request: jangan kirim struk WA ke customer setelah pending
+	// dilunasi — customer sudah dapat invoice WA saat order pending dibuat,
+	// kirim ulang struk pelunasan jadi double WA. Admin tetap dinotif
+	// supaya tahu pesanan online sudah masuk kasir.
 	go s.sendTransactionNotificationWA(order, userID)
 
 	resp := s.toResponse(order)

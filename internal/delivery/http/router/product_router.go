@@ -19,6 +19,7 @@ func UseProductRouter(ctx context.Context, r fiber.Router) {
 	products.Get("/", ctrl.GetAll)
 	products.Get("/low-stock", ctrl.GetLowStock)
 	products.Get("/sku/:sku", ctrl.GetBySKU)
+	products.Get("/:id/price-history", ctrl.GetPriceHistory)
 	products.Get("/:id", ctrl.GetByID)
 	products.Post("/", auth.AllowInventoryWrite(), ctrl.Create)
 	products.Put("/:id", auth.AllowInventoryWrite(), ctrl.Update)

@@ -56,3 +56,24 @@ type Supplier struct {
 }
 
 func (Supplier) TableName() string { return "suppliers" }
+
+// ProductPriceHistory keeps an append-only log of every price change for a
+// product. Reports that need historical accuracy (profit, sales by tier) can
+// look up the price active at a given timestamp via:
+//   start_date <= t AND (end_date IS NULL OR end_date > t)
+// price_type values: "regular" | "member" | "purchase".
+// status values:     "active"  | "inactive".
+type ProductPriceHistory struct {
+	ID         string     `gorm:"type:varchar(36);primary_key;not null" json:"id"`
+	ProductID  string     `gorm:"type:varchar(36);not null;index" json:"product_id"`
+	PriceType  string     `gorm:"type:varchar(20);not null" json:"price_type"`
+	Price      float64    `gorm:"type:decimal(15,2);not null;default:0" json:"price"`
+	Status     string     `gorm:"type:varchar(20);not null;default:'active'" json:"status"`
+	StartDate  time.Time  `gorm:"not null;default:current_timestamp()" json:"start_date"`
+	EndDate    *time.Time `gorm:"null" json:"end_date,omitempty"`
+	ChangedBy  *string    `gorm:"type:varchar(36);null" json:"changed_by,omitempty"`
+	Note       string     `gorm:"type:varchar(255);null" json:"note,omitempty"`
+	CreatedAt  time.Time  `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
+}
+
+func (ProductPriceHistory) TableName() string { return "product_price_history" }

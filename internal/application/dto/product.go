@@ -96,6 +96,19 @@ type UpdateSupplierRequest struct {
 	Address string `json:"address"`
 }
 
+type ProductPriceHistoryResponse struct {
+	ID        string  `json:"id"`
+	ProductID string  `json:"product_id"`
+	PriceType string  `json:"price_type"`
+	Price     float64 `json:"price"`
+	Status    string  `json:"status"`
+	StartDate string  `json:"start_date"`
+	EndDate   *string `json:"end_date,omitempty"`
+	ChangedBy *string `json:"changed_by,omitempty"`
+	Note      string  `json:"note,omitempty"`
+	CreatedAt string  `json:"created_at"`
+}
+
 type SupplierResponse struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
