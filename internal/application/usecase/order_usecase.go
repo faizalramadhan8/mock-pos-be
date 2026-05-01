@@ -232,14 +232,19 @@ func (s *OrderService) ResendReceiptWA(orderID, userID string) *dto.ApiError {
 	}
 
 	storeName := "Toko Bahan Kue Santi"
-	if settings, sErr := s.SettingsRepo.Get(); sErr == nil && settings != nil && settings.StoreName != "" {
-		storeName = settings.StoreName
+	storeAddress, storePhone := "", ""
+	if settings, sErr := s.SettingsRepo.Get(); sErr == nil && settings != nil {
+		if settings.StoreName != "" {
+			storeName = settings.StoreName
+		}
+		storeAddress = settings.StoreAddress
+		storePhone = settings.StorePhone
 	}
 	cashierName := ""
 	if u, uErr := s.AuthRepo.FindByID(userID); uErr == nil && u != nil {
 		cashierName = u.FullName
 	}
-	text := whatsapp.FormatReceipt(order, storeName, cashierName)
+	text := whatsapp.FormatReceipt(order, storeName, storeAddress, storePhone, cashierName)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -271,15 +276,20 @@ func (s *OrderService) sendReceiptWA(order *entity.Order, userID string) {
 	}
 
 	storeName := "Toko Bahan Kue Santi"
-	if settings, err := s.SettingsRepo.Get(); err == nil && settings != nil && settings.StoreName != "" {
-		storeName = settings.StoreName
+	storeAddress, storePhone := "", ""
+	if settings, err := s.SettingsRepo.Get(); err == nil && settings != nil {
+		if settings.StoreName != "" {
+			storeName = settings.StoreName
+		}
+		storeAddress = settings.StoreAddress
+		storePhone = settings.StorePhone
 	}
 	cashierName := ""
 	if u, err := s.AuthRepo.FindByID(userID); err == nil && u != nil {
 		cashierName = u.FullName
 	}
 
-	text := whatsapp.FormatReceipt(order, storeName, cashierName)
+	text := whatsapp.FormatReceipt(order, storeName, storeAddress, storePhone, cashierName)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -728,15 +738,18 @@ func (s *OrderService) sendPendingInvoiceWASync(order *entity.Order, bankAccount
 		return
 	}
 	storeName := "Toko Bahan Kue Santi"
+	storeAddress, storePhone := "", ""
 	var bankLine string
 	if settings, err := s.SettingsRepo.Get(); err == nil && settings != nil {
 		if settings.StoreName != "" {
 			storeName = settings.StoreName
 		}
+		storeAddress = settings.StoreAddress
+		storePhone = settings.StorePhone
 		// BankAccounts is JSON; caller passes an ID — pick matching account or first.
 		bankLine = pickBankAccountLine(settings.BankAccounts, bankAccountID)
 	}
-	text := whatsapp.FormatPendingInvoice(order, storeName, bankLine)
+	text := whatsapp.FormatPendingInvoice(order, storeName, storeAddress, storePhone, bankLine)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err := s.WA.SendText(ctx, order.CustomerPhone, text); err != nil {

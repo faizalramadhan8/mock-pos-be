@@ -8,73 +8,114 @@ import (
 	"github.com/faizalramadhan/pos-be/internal/domain/entity"
 )
 
-// FormatReceipt renders a compact, customer-friendly receipt for WhatsApp.
-// Mirrors the printed thermal struk format Santi prefers: one line per item
-// with name+qty on the left and line total on the right, then a summary block
-// (Subtotal / Hemat / Total). The "harga member, hemat …" detail per-item
-// was removed (customers found it cluttered) — savings are aggregated at the
-// bottom instead.
-func FormatReceipt(order *entity.Order, storeName, cashierName string) string {
+// FormatReceipt renders a customer-facing receipt for WhatsApp. Mirrors the
+// thermal struk Bu Santi cetak: header (nama/alamat/telp), info block (No #,
+// Kasir, Tanggal, Member/Pelanggan), items, Subtotal / Hemat Member / Total,
+// disclaimer. NO Diskon / PPN / Pembayaran / Kasir-bawah block — Bu Santi
+// minta struk diperingkas.
+func FormatReceipt(order *entity.Order, storeName, storeAddress, storePhone, cashierName string) string {
 	if storeName == "" {
 		storeName = "Toko Bahan Kue Santi"
 	}
+	if cashierName == "" {
+		cashierName = "-"
+	}
 	var b strings.Builder
 
-	fmt.Fprintf(&b, "*%s*\n", strings.ToUpper(storeName))
-	fmt.Fprintf(&b, "_Struk Pembelian_\n\n")
-	fmt.Fprintf(&b, "Tanggal: %s\n", order.CreatedAt.In(jktLoc()).Format("02 Jan 2006, 15:04"))
-	fmt.Fprintf(&b, "ID: #%s\n", shortOrderID(order.ID))
+	// Header
+	fmt.Fprintf(&b, "*%s*\n", storeName)
+	if storeAddress != "" {
+		fmt.Fprintf(&b, "%s\n", storeAddress)
+	}
+	if storePhone != "" {
+		fmt.Fprintf(&b, "Telp. %s\n", storePhone)
+	}
 	b.WriteString("─────────────────\n")
 
-	// Item lines — one row per item: "Name ×qty   Rp lineTotal".
-	// The line total goes on its own line below the name, prefixed with a
-	// soft indent, so long product names don't wrap into the price column.
-	var memberSavings float64
+	// Info block — orderNo format YYYY.MM.DD.NNNNN sama seperti struk offline.
+	created := order.CreatedAt.In(jktLoc())
+	digits := stripNonDigits(order.ID)
+	if digits == "" {
+		digits = order.ID
+	}
+	idTail := tailPad(digits, 5)
+	orderNo := fmt.Sprintf("%04d.%02d.%02d.%s", created.Year(), int(created.Month()), created.Day(), idTail)
+	dateStr := created.Format("02-01-2006  15:04")
+
+	fmt.Fprintf(&b, "No #    : %s\n", orderNo)
+	fmt.Fprintf(&b, "Kasir   : %s\n", cashierName)
+	fmt.Fprintf(&b, "Tanggal : %s\n", dateStr)
+
+	// Customer label: "Member" kalau pakai member, "Pelanggan" kalau non-member
+	// yang isi nama. Skip kalau walk-in tanpa nama.
+	customerName := ""
+	customerLabel := "Pelanggan"
+	if order.Member != nil && order.Member.Name != "" {
+		customerName = order.Member.Name
+		customerLabel = "Member"
+	} else if order.Customer != "" {
+		customerName = order.Customer
+	}
+	if customerName != "" {
+		fmt.Fprintf(&b, "%s : %s\n", padRight(customerLabel, 7), customerName)
+	}
+	b.WriteString("─────────────────\n")
+
+	// Items: 2-line per item (nama+qty di atas, harga indented di bawah) — WA
+	// pakai variable-width font, single-line dengan column alignment tidak
+	// reliable. Indent membuat harga gampang di-scan.
+	var memberSavings, gross float64
 	for _, item := range order.Items {
+		regular := item.UnitPrice
+		if item.RegularPrice != nil && *item.RegularPrice > item.UnitPrice {
+			regular = *item.RegularPrice
+			memberSavings += (regular - item.UnitPrice) * float64(item.Quantity)
+		}
+		gross += regular * float64(item.Quantity)
+
 		lineTotal := item.UnitPrice * float64(item.Quantity)
 		fmt.Fprintf(&b, "%s ×%d\n", item.Name, item.Quantity)
 		fmt.Fprintf(&b, "   %s\n", rp(lineTotal))
-		if item.RegularPrice != nil && *item.RegularPrice > item.UnitPrice {
-			memberSavings += (*item.RegularPrice - item.UnitPrice) * float64(item.Quantity)
-		}
 	}
 	b.WriteString("─────────────────\n")
 
-	// Summary: Subtotal → (Hemat Member) → (Diskon) → (PPN) → TOTAL
-	gross := 0.0
-	for _, it := range order.Items {
-		gross += it.UnitPrice * float64(it.Quantity)
-	}
+	// Summary
+	fmt.Fprintf(&b, "Subtotal: %s\n", rp(gross))
 	if memberSavings > 0 {
-		fmt.Fprintf(&b, "Subtotal: %s\n", rp(gross+memberSavings))
 		fmt.Fprintf(&b, "Hemat Member: -%s\n", rp(memberSavings))
-	} else {
-		fmt.Fprintf(&b, "Subtotal: %s\n", rp(gross))
 	}
-	if order.OrderDiscount > 0 {
-		fmt.Fprintf(&b, "Diskon: -%s\n", rp(order.OrderDiscount))
-	}
-	if order.PPN > 0 {
-		fmt.Fprintf(&b, "PPN %.0f%%: %s\n", order.PPNRate, rp(order.PPN))
-	}
-	fmt.Fprintf(&b, "*TOTAL: %s*\n", rp(order.Total))
-
-	// Payment line(s) — single or split.
-	if len(order.Payments) > 1 {
-		b.WriteString("Pembayaran:\n")
-		for _, p := range order.Payments {
-			fmt.Fprintf(&b, "  %s: %s\n", strings.ToUpper(p.Method), rp(p.Amount))
-		}
-	} else {
-		fmt.Fprintf(&b, "Pembayaran: %s\n", strings.ToUpper(order.Payment))
-	}
-	if cashierName != "" {
-		fmt.Fprintf(&b, "Kasir: %s\n", cashierName)
-	}
+	fmt.Fprintf(&b, "*Total: %s*\n", rp(order.Total))
 	b.WriteString("─────────────────\n")
-	b.WriteString("_Barang yang dibeli tidak dapat ditukar atau dikembalikan._\n\n")
-	b.WriteString("Terima kasih sudah berbelanja 🙏")
+	b.WriteString("_Barang yang sudah dibeli tidak dapat ditukar atau dikembalikan._\n\n")
+	b.WriteString("Terimakasih sudah berbelanja!")
 	return b.String()
+}
+
+// stripNonDigits returns only the digit characters of s.
+func stripNonDigits(s string) string {
+	var b strings.Builder
+	for _, c := range s {
+		if c >= '0' && c <= '9' {
+			b.WriteRune(c)
+		}
+	}
+	return b.String()
+}
+
+// tailPad returns the last n chars of s, left-padded with '0' if shorter.
+func tailPad(s string, n int) string {
+	if len(s) >= n {
+		return strings.ToUpper(s[len(s)-n:])
+	}
+	return strings.ToUpper(strings.Repeat("0", n-len(s)) + s)
+}
+
+// padRight pads s on the right with spaces to width w.
+func padRight(s string, w int) string {
+	if len(s) >= w {
+		return s
+	}
+	return s + strings.Repeat(" ", w-len(s))
 }
 
 func rp(v float64) string {
