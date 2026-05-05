@@ -188,6 +188,24 @@ func (s *OrderService) Create(req dto.CreateOrderRequest, userID string) (*dto.O
 
 		// Consume FIFO batches
 		s.consumeFIFO(tx, item.ProductID, stockDelta)
+
+		// Audit trail: insert stock_movements record type='out' so reports
+		// can reconstruct stock-out history. Tanpa ini, "Total Barang Keluar"
+		// dan Recent Movements jadi kosong.
+		if err := tx.Create(&entity.StockMovement{
+			ID:         uuid.New().String(),
+			ProductID:  item.ProductID,
+			Type:       "out",
+			Quantity:   stockDelta,
+			UnitType:   item.UnitType,
+			UnitPrice:  item.UnitPrice,
+			Note:       "Sale (Order #" + order.ID + ")",
+			CreatedBy:  userID,
+			CreatedAt:  time.Now(),
+		}).Error; err != nil {
+			tx.Rollback()
+			return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to record stock movement"}
+		}
 	}
 
 	if err := tx.Create(order).Error; err != nil {
@@ -648,6 +666,22 @@ func (s *OrderService) MarkAsPaid(orderID string, req dto.MarkAsPaidRequest, use
 			return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to deduct stock"}
 		}
 		s.consumeFIFO(tx, item.ProductID, stockDelta)
+
+		// Audit trail: stock-out movement record (sama dengan flow Create order).
+		if err := tx.Create(&entity.StockMovement{
+			ID:        uuid.New().String(),
+			ProductID: item.ProductID,
+			Type:      "out",
+			Quantity:  stockDelta,
+			UnitType:  item.UnitType,
+			UnitPrice: item.UnitPrice,
+			Note:      "Sale (Pending Order #" + order.ID + " marked paid)",
+			CreatedBy: userID,
+			CreatedAt: time.Now(),
+		}).Error; err != nil {
+			tx.Rollback()
+			return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to record stock movement"}
+		}
 	}
 
 	// Persist payment split
