@@ -2,6 +2,8 @@ package repository
 
 import (
 	"context"
+	"time"
+
 	"github.com/faizalramadhan/pos-be/internal/domain/entity"
 	"gorm.io/gorm"
 )
@@ -41,6 +43,19 @@ func (r *OrderRepository) FindByID(id string) (*entity.Order, error) {
 func (r *OrderRepository) FindByDateRange(startDate, endDate string) ([]entity.Order, error) {
 	var orders []entity.Order
 	if err := r.DB.Preload("Items").Preload("Payments").Preload("Member").Where("DATE(created_at) BETWEEN ? AND ?", startDate, endDate).Order("created_at DESC").Find(&orders).Error; err != nil {
+		return nil, err
+	}
+	return orders, nil
+}
+
+// FindCompletedSince returns completed orders created after a given timestamp.
+// Used by the cron-based admin transaction digest (kirim ringkasan tiap 30
+// menit) supaya tidak fire WA per-checkout — cegah ban risk dari volume tinggi.
+func (r *OrderRepository) FindCompletedSince(since time.Time) ([]entity.Order, error) {
+	var orders []entity.Order
+	if err := r.DB.Preload("Items").Preload("Payments").Preload("Member").
+		Where("status = ? AND created_at > ?", "completed", since).
+		Order("created_at ASC").Find(&orders).Error; err != nil {
 		return nil, err
 	}
 	return orders, nil

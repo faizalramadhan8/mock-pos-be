@@ -18,6 +18,12 @@ import (
 	"gorm.io/gorm"
 )
 
+// Threshold untuk transaksi "besar" yang trigger notif WA ke admin/owner.
+// Bu Santi minta hanya kirim notif kalau total ≥ Rp 500.000 (transaksi
+// besar saja, supaya tidak spam quota WA + nomor toko tidak ke-flag karena
+// volume tinggi). Kalau di masa depan mau dynamic, pindah ke settings table.
+const largeTransactionThreshold = 500_000.0
+
 type OrderService struct {
 	Log          *zerolog.Logger
 	DB           *gorm.DB
@@ -221,9 +227,15 @@ func (s *OrderService) Create(req dto.CreateOrderRequest, userID string) (*dto.O
 		order = created
 	}
 
-	// Fire-and-forget WhatsApp messages — never block checkout on WA failure.
+	// Fire-and-forget WhatsApp ke customer (struk).
 	go s.sendReceiptWA(order, userID)
-	go s.sendTransactionNotificationWA(order, userID)
+
+	// Notifikasi admin: HANYA untuk transaksi besar (≥ Rp 500.000) supaya
+	// quota WA hemat + nomor toko tidak ke-flag karena volume tinggi.
+	// Bu Santi confirm: "Iya lebih diset notifikasi dikirim pd transaksi >=500,000".
+	if order.Total >= largeTransactionThreshold {
+		go s.sendLargeTransactionNotificationWA(order, userID)
+	}
 
 	resp := s.toResponse(order)
 	return &resp, nil
@@ -319,21 +331,24 @@ func (s *OrderService) sendReceiptWA(order *entity.Order, userID string) {
 	}
 }
 
-// sendTransactionNotificationWA notifies every admin/superadmin (with a phone
-// number on file) of a new transaction. Gated by WA_RECEIPT_ENABLED — the
-// same toggle that governs the member receipt. Runs as a goroutine after
-// checkout, never blocks the response.
-func (s *OrderService) sendTransactionNotificationWA(order *entity.Order, userID string) {
+// sendLargeTransactionNotificationWA notifies admin/superadmin owners (with
+// phone on file) of a transaction yang melewati threshold besar
+// (largeTransactionThreshold). Hanya untuk transaksi penting — supaya quota
+// WA hemat + cegah ban risk dari volume notif tinggi. Bu Santi confirm:
+// "Iya lebih diset notifikasi dikirim pd transaksi >=500,000".
+//
+// Format pesan kasih emphasis "TRANSAKSI BESAR" supaya owner langsung tahu
+// ini bukan notif rutin.
+func (s *OrderService) sendLargeTransactionNotificationWA(order *entity.Order, userID string) {
 	if s.WA == nil || !s.WA.Enabled() {
 		return
 	}
 	admins, err := s.AuthRepo.FindAdmins()
 	if err != nil {
-		s.Log.Error().Err(err).Msg("Failed to load admin list for transaction WA")
+		s.Log.Error().Err(err).Msg("Failed to load admin list for large-tx WA")
 		return
 	}
 	if len(admins) == 0 {
-		s.Log.Warn().Msg("No admin/superadmin with phone found; transaction notification skipped")
 		return
 	}
 
@@ -342,23 +357,25 @@ func (s *OrderService) sendTransactionNotificationWA(order *entity.Order, userID
 		cashierName = u.FullName
 	}
 
-	text := formatTransactionNotification(order, cashierName)
+	text := formatLargeTransactionNotification(order, cashierName)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	for _, a := range admins {
 		if err := s.WA.SendText(ctx, a.PhoneNumber, text); err != nil {
 			s.Log.Warn().Err(err).
 				Str("order_id", order.ID).
 				Str("admin_id", a.ID).
-				Msg("Failed to send WA transaction notification")
+				Msg("Failed to send WA large-tx notification")
 		}
 	}
 }
 
-// formatTransactionNotification renders the detail view for the owner's WA.
-// Lists all items if ≤5, otherwise first 4 + "dan N lainnya".
-func formatTransactionNotification(order *entity.Order, cashierName string) string {
+// formatLargeTransactionNotification renders the owner-facing message for
+// transaksi besar (≥ largeTransactionThreshold). Format mengikuti template
+// notif transaksi yang sudah familiar untuk Bu Santi (header "Transaksi
+// Baru", item 2-baris, total di bawah, waktu + ID di footer).
+func formatLargeTransactionNotification(order *entity.Order, cashierName string) string {
 	var b strings.Builder
 
 	fmt.Fprintf(&b, "*TOKO BAHAN KUE SANTI*\n")
@@ -712,10 +729,11 @@ func (s *OrderService) MarkAsPaid(orderID string, req dto.MarkAsPaidRequest, use
 	}
 
 	// Owner request: jangan kirim struk WA ke customer setelah pending
-	// dilunasi — customer sudah dapat invoice WA saat order pending dibuat,
-	// kirim ulang struk pelunasan jadi double WA. Admin tetap dinotif
-	// supaya tahu pesanan online sudah masuk kasir.
-	go s.sendTransactionNotificationWA(order, userID)
+	// dilunasi — customer sudah dapat invoice WA saat order pending dibuat.
+	// Admin notif: hanya kalau transaksi besar (≥ largeTransactionThreshold).
+	if order.Total >= largeTransactionThreshold {
+		go s.sendLargeTransactionNotificationWA(order, userID)
+	}
 
 	resp := s.toResponse(order)
 	return &resp, nil
