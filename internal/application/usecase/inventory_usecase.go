@@ -60,6 +60,16 @@ func (s *InventoryService) GetAllMovements(movementType string, page, limit int)
 func (s *InventoryService) CreateMovement(req dto.CreateStockMovementRequest, userID string) (*dto.StockMovementResponse, *dto.ApiError) {
 	tx := s.DB.Begin()
 
+	// Default reason kalau caller tidak set: "restock" untuk in, "sale" untuk out.
+	reason := req.Reason
+	if reason == "" {
+		if req.Type == "in" {
+			reason = "restock"
+		} else {
+			reason = "sale"
+		}
+	}
+
 	movement := &entity.StockMovement{
 		ID:            uuid.New().String(),
 		ProductID:     req.ProductID,
@@ -67,6 +77,7 @@ func (s *InventoryService) CreateMovement(req dto.CreateStockMovementRequest, us
 		Quantity:      req.Quantity,
 		UnitType:      req.UnitType,
 		UnitPrice:     req.UnitPrice,
+		Reason:        reason,
 		Note:          req.Note,
 		PaymentTerms:  req.PaymentTerms,
 		PaymentStatus: req.PaymentStatus,
@@ -235,6 +246,7 @@ func (s *InventoryService) toMoveResponse(m *entity.StockMovement) dto.StockMove
 		Quantity:      m.Quantity,
 		UnitType:      m.UnitType,
 		UnitPrice:     m.UnitPrice,
+		Reason:        m.Reason,
 		Note:          m.Note,
 		ExpiryDate:    m.ExpiryDate,
 		SupplierID:    m.SupplierID,
@@ -245,6 +257,64 @@ func (s *InventoryService) toMoveResponse(m *entity.StockMovement) dto.StockMove
 		CreatedAt:     m.CreatedAt.Format(time.RFC3339),
 	}
 	return resp
+}
+
+// AdjustStock — flow penyesuaian stok untuk Bu Santi: stok jadi nilai
+// absolut tertentu (newStock) dengan alasan + catatan. Sistem auto-record
+// movement supaya audit trail jelas. Diff bisa positif (tambah) atau
+// negatif (kurang). Reason valid: repack | lost | damaged | opname |
+// sample | other (validasi di DTO).
+func (s *InventoryService) AdjustStock(productID string, req dto.StockAdjustmentRequest, userID string) (*dto.StockMovementResponse, *dto.ApiError) {
+	product, err := s.ProductRepo.FindByID(productID)
+	if err != nil {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Product not found"}
+	}
+
+	currentStock := product.Stock
+	diff := req.NewStock - currentStock
+	if diff == 0 {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "New stock sama dengan current — tidak ada penyesuaian"}
+	}
+
+	tx := s.DB.Begin()
+
+	// Update products.stock ke nilai baru (absolute set)
+	if err := tx.Model(&entity.Product{}).Where("id = ?", productID).
+		Update("stock", req.NewStock).Error; err != nil {
+		tx.Rollback()
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to update stock"}
+	}
+
+	// Insert audit trail movement record
+	movement := &entity.StockMovement{
+		ID:        uuid.New().String(),
+		ProductID: productID,
+		Quantity:  abs(diff),
+		UnitType:  "individual",
+		Reason:    req.Reason,
+		Note:      req.Note,
+		CreatedBy: userID,
+	}
+	if diff > 0 {
+		movement.Type = "in"
+	} else {
+		movement.Type = "out"
+	}
+	if err := tx.Create(movement).Error; err != nil {
+		tx.Rollback()
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to record adjustment"}
+	}
+
+	tx.Commit()
+	resp := s.toMoveResponse(movement)
+	return &resp, nil
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
 }
 
 func (s *InventoryService) toBatchResponse(b *entity.StockBatch) dto.StockBatchResponse {

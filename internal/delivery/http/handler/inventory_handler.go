@@ -66,6 +66,27 @@ func (ctrl *InventoryController) CreateMovement(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusCreated).JSON(dto.ApiResponse{Code: fiber.StatusCreated, Message: "successfully", Body: resp})
 }
 
+// AdjustStock — penyesuaian stok produk (Stock Adjustment flow). Bu Santi
+// dapat input newStock + reason (repack/lost/damaged/opname/sample/other)
+// + note. Sistem hitung diff dari current stock + insert audit movement.
+func (ctrl *InventoryController) AdjustStock(c *fiber.Ctx) error {
+	productID := c.Params("id")
+	var req dto.StockAdjustmentRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(dto.ApiResponse{Code: fiber.ErrUnprocessableEntity.Code, Message: fiber.ErrUnprocessableEntity.Message, Error: err.Error()})
+	}
+	if err := util.ValidateRequest(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{Code: fiber.ErrBadRequest.Code, Message: fiber.ErrBadRequest.Message, Error: err})
+	}
+
+	claims := c.Locals("session").(*dto.JWTClaims)
+	resp, fail := ctrl.Service.AdjustStock(productID, req, claims.ID)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
+	}
+	return c.Status(fiber.StatusCreated).JSON(dto.ApiResponse{Code: fiber.StatusCreated, Message: "successfully", Body: resp})
+}
+
 func (ctrl *InventoryController) UpdatePaymentStatus(c *fiber.Ctx) error {
 	id := c.Params("id")
 	var req dto.UpdatePaymentStatusRequest

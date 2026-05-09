@@ -43,6 +43,9 @@ func UseInventoryRouter(ctx context.Context, r fiber.Router) {
 	inventory.Get("/batches", ctrl.GetAllBatches)
 	inventory.Get("/batches/expiring", ctrl.GetExpiringBatches)
 	inventory.Post("/batches/consume-fifo", auth.AllowInventoryWrite(), ctrl.ConsumeFIFO)
+	// Stock Adjustment (Bu Santi: repack/hilang/rusak/opname). Hanya admins
+	// + superadmin yang boleh — kasir/staff biasa tidak.
+	inventory.Post("/products/:id/adjust-stock", auth.AllowAdmins(), ctrl.AdjustStock)
 }
 
 func UseRefundRouter(ctx context.Context, r fiber.Router) {

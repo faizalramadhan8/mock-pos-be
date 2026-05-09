@@ -6,6 +6,7 @@ type CreateStockMovementRequest struct {
 	Quantity      int     `json:"quantity" validate:"required,min=1"`
 	UnitType      string  `json:"unit_type"`
 	UnitPrice     float64 `json:"unit_price"`
+	Reason        string  `json:"reason"` // restock|sale|repack|lost|damaged|opname|cancel|refund|other
 	Note          string  `json:"note"`
 	ExpiryDate    string  `json:"expiry_date"`
 	SupplierID    string  `json:"supplier_id"`
@@ -13,6 +14,17 @@ type CreateStockMovementRequest struct {
 	DueDate       string  `json:"due_date"`
 	PaymentStatus string  `json:"payment_status"`
 	BatchNumber   string  `json:"batch_number"`
+}
+
+// StockAdjustmentRequest — Stock Adjustment flow (Bu Santi: repack, hilang,
+// rusak, koreksi opname, dll). NewStock = stok absolut yg diharapkan setelah
+// penyesuaian; sistem hitung diff dari current. Reason mandatory supaya
+// audit trail jelas. Terpisah dari AdjustStockRequest (di product.go) yang
+// pakai delta — yang ini pakai absolute new value (cocok untuk opname).
+type StockAdjustmentRequest struct {
+	NewStock int    `json:"new_stock" validate:"min=0"`
+	Reason   string `json:"reason" validate:"required,oneof=repack lost damaged opname sample other"`
+	Note     string `json:"note"`
 }
 
 type UpdatePaymentStatusRequest struct {
@@ -27,6 +39,7 @@ type StockMovementResponse struct {
 	Quantity      int              `json:"quantity"`
 	UnitType      string           `json:"unit_type"`
 	UnitPrice     float64          `json:"unit_price"`
+	Reason        string           `json:"reason,omitempty"`
 	Note          string           `json:"note,omitempty"`
 	ExpiryDate    *string          `json:"expiry_date,omitempty"`
 	SupplierID    *string          `json:"supplier_id,omitempty"`
