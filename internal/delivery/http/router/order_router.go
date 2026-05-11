@@ -18,6 +18,7 @@ func UseOrderRouter(ctx context.Context, r fiber.Router) {
 	orders := r.Group("/orders", auth.AllowAll())
 	orders.Get("/", ctrl.GetAll)
 	orders.Get("/stats", ctrl.GetStats)
+	orders.Get("/aggregate", ctrl.Aggregate)
 	orders.Get("/:id", ctrl.GetByID)
 	orders.Post("/", auth.AllowCashier(), ctrl.Create)
 	orders.Patch("/:id/cancel", auth.AllowAdmins(), ctrl.Cancel)

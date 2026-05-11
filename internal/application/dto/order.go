@@ -119,3 +119,55 @@ type OrderListRequest struct {
 	Page      int    `query:"page"`
 	Limit     int    `query:"limit"`
 }
+
+// AggregateRequest — query untuk /orders/aggregate. Default: completed only,
+// no date filter. Empty from/to = all-time aggregation.
+type OrderAggregateRequest struct {
+	From string `query:"from"` // YYYY-MM-DD inclusive
+	To   string `query:"to"`   // YYYY-MM-DD inclusive
+}
+
+type AggregateTopProduct struct {
+	ProductID  string  `json:"product_id"`
+	Name       string  `json:"name"`
+	Qty        int     `json:"qty"`
+	Revenue    float64 `json:"revenue"`
+	AvgPrice   float64 `json:"avg_price"`
+}
+
+type AggregateMember struct {
+	MemberID  string  `json:"member_id"`
+	Name      string  `json:"name"`
+	Phone     string  `json:"phone,omitempty"`
+	Orders    int     `json:"orders"`
+	Spend     float64 `json:"spend"`
+	Savings   float64 `json:"savings"`
+	LastVisit string  `json:"last_visit,omitempty"`
+}
+
+type AggregatePaymentBreakdown struct {
+	Method string  `json:"method"`
+	Count  int     `json:"count"`
+	Total  float64 `json:"total"`
+}
+
+type AggregateCashier struct {
+	CashierID         string                      `json:"cashier_id"`
+	Name              string                      `json:"name"`
+	Orders            int                         `json:"orders"`
+	Revenue           float64                     `json:"revenue"`
+	PaymentBreakdown  []AggregatePaymentBreakdown `json:"payment_breakdown"`
+}
+
+type OrderAggregateResponse struct {
+	From              string                      `json:"from"`
+	To                string                      `json:"to"`
+	TotalOrders       int                         `json:"total_orders"`
+	TotalRevenue      float64                     `json:"total_revenue"`
+	TotalQty          int                         `json:"total_qty"`
+	TotalMemberSaving float64                     `json:"total_member_saving"`
+	TopProducts       []AggregateTopProduct       `json:"top_products"`
+	Members           []AggregateMember           `json:"members"`
+	PaymentBreakdown  []AggregatePaymentBreakdown `json:"payment_breakdown"`
+	PerCashier        []AggregateCashier          `json:"per_cashier"`
+}

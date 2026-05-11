@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -534,6 +535,224 @@ func (s *OrderService) GetRevenueStats() (float64, int64, *dto.ApiError) {
 		return 0, 0, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to get stats"}
 	}
 	return revenue, count, nil
+}
+
+// Aggregate — hitung statistik untuk Reports + Dashboard server-side. Range
+// completed orders di-aggregate jadi: total revenue/qty/count, top products
+// sort by qty desc, member spending breakdown, payment method breakdown,
+// per-cashier summary. Cegah FE load full orders array yang scale buruk.
+//
+// Empty from/to = all-time. Inclusive both sides. Filter status='completed'
+// only (cancelled/refunded skip — konsisten dengan Reports/Dashboard convention).
+func (s *OrderService) Aggregate(from, to string) (*dto.OrderAggregateResponse, *dto.ApiError) {
+	orders, err := s.Repo.FindCompletedForAggregate(from, to)
+	if err != nil {
+		s.Log.Error().Err(err).Msg("Failed to fetch orders for aggregation")
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to aggregate orders"}
+	}
+
+	resp := &dto.OrderAggregateResponse{
+		From:        from,
+		To:          to,
+		TotalOrders: len(orders),
+	}
+
+	// Maps untuk agregat — finalize ke slice di akhir.
+	type prodAgg struct {
+		productID string
+		name      string
+		qty       int
+		revenue   float64
+	}
+	type memberAgg struct {
+		memberID  string
+		name      string
+		phone     string
+		orders    int
+		spend     float64
+		savings   float64
+		lastVisit time.Time
+	}
+	type cashierAgg struct {
+		cashierID string
+		name      string
+		orders    int
+		revenue   float64
+		payments  map[string]*dto.AggregatePaymentBreakdown
+	}
+
+	products := map[string]*prodAgg{}
+	members := map[string]*memberAgg{}
+	paymentTotals := map[string]*dto.AggregatePaymentBreakdown{}
+	cashiers := map[string]*cashierAgg{}
+
+	for i := range orders {
+		o := &orders[i]
+		resp.TotalRevenue += o.Total
+
+		// Items → top products + total qty + member savings
+		for _, it := range o.Items {
+			resp.TotalQty += it.Quantity
+			if it.RegularPrice != nil && *it.RegularPrice > it.UnitPrice {
+				resp.TotalMemberSaving += (*it.RegularPrice - it.UnitPrice) * float64(it.Quantity)
+			}
+			key := it.ProductID
+			if key == "" {
+				key = it.Name
+			}
+			pa, ok := products[key]
+			if !ok {
+				pa = &prodAgg{productID: it.ProductID, name: it.Name}
+				products[key] = pa
+			}
+			pa.qty += it.Quantity
+			pa.revenue += it.UnitPrice * float64(it.Quantity)
+		}
+
+		// Members (registered only)
+		if o.Member != nil && o.Member.ID != "" {
+			ma, ok := members[o.Member.ID]
+			if !ok {
+				ma = &memberAgg{
+					memberID: o.Member.ID,
+					name:     o.Member.Name,
+					phone:    o.Member.Phone,
+				}
+				members[o.Member.ID] = ma
+			}
+			ma.orders++
+			ma.spend += o.Total
+			savings := 0.0
+			for _, it := range o.Items {
+				if it.RegularPrice != nil && *it.RegularPrice > it.UnitPrice {
+					savings += (*it.RegularPrice - it.UnitPrice) * float64(it.Quantity)
+				}
+			}
+			ma.savings += savings
+			if o.CreatedAt.After(ma.lastVisit) {
+				ma.lastVisit = o.CreatedAt
+			}
+		}
+
+		// Payment breakdown — pakai split (Payments[]) kalau ada, else
+		// fallback ke order.Payment string + Total.
+		if len(o.Payments) > 0 {
+			for _, p := range o.Payments {
+				addPaymentBreakdown(paymentTotals, p.Method, p.Amount)
+			}
+		} else {
+			addPaymentBreakdown(paymentTotals, o.Payment, o.Total)
+		}
+
+		// Per-cashier — kasir creator via order.CreatedBy
+		if o.CreatedBy != "" {
+			ca, ok := cashiers[o.CreatedBy]
+			if !ok {
+				name := "-"
+				if u, err := s.AuthRepo.FindByID(o.CreatedBy); err == nil && u != nil {
+					name = u.FullName
+				}
+				ca = &cashierAgg{
+					cashierID: o.CreatedBy,
+					name:      name,
+					payments:  map[string]*dto.AggregatePaymentBreakdown{},
+				}
+				cashiers[o.CreatedBy] = ca
+			}
+			ca.orders++
+			ca.revenue += o.Total
+			if len(o.Payments) > 0 {
+				for _, p := range o.Payments {
+					addPaymentBreakdown(ca.payments, p.Method, p.Amount)
+				}
+			} else {
+				addPaymentBreakdown(ca.payments, o.Payment, o.Total)
+			}
+		}
+	}
+
+	// Materialize: products → sort by qty desc
+	resp.TopProducts = make([]dto.AggregateTopProduct, 0, len(products))
+	for _, p := range products {
+		avg := 0.0
+		if p.qty > 0 {
+			avg = p.revenue / float64(p.qty)
+		}
+		resp.TopProducts = append(resp.TopProducts, dto.AggregateTopProduct{
+			ProductID: p.productID,
+			Name:      p.name,
+			Qty:       p.qty,
+			Revenue:   p.revenue,
+			AvgPrice:  avg,
+		})
+	}
+	sort.Slice(resp.TopProducts, func(i, j int) bool {
+		return resp.TopProducts[i].Qty > resp.TopProducts[j].Qty
+	})
+
+	// Members → sort by spend desc
+	resp.Members = make([]dto.AggregateMember, 0, len(members))
+	for _, m := range members {
+		mr := dto.AggregateMember{
+			MemberID: m.memberID,
+			Name:     m.name,
+			Phone:    m.phone,
+			Orders:   m.orders,
+			Spend:    m.spend,
+			Savings:  m.savings,
+		}
+		if !m.lastVisit.IsZero() {
+			mr.LastVisit = m.lastVisit.Format(time.RFC3339)
+		}
+		resp.Members = append(resp.Members, mr)
+	}
+	sort.Slice(resp.Members, func(i, j int) bool {
+		return resp.Members[i].Spend > resp.Members[j].Spend
+	})
+
+	// Payment breakdown → slice
+	resp.PaymentBreakdown = make([]dto.AggregatePaymentBreakdown, 0, len(paymentTotals))
+	for _, p := range paymentTotals {
+		resp.PaymentBreakdown = append(resp.PaymentBreakdown, *p)
+	}
+	sort.Slice(resp.PaymentBreakdown, func(i, j int) bool {
+		return resp.PaymentBreakdown[i].Total > resp.PaymentBreakdown[j].Total
+	})
+
+	// Cashiers → sort by revenue desc
+	resp.PerCashier = make([]dto.AggregateCashier, 0, len(cashiers))
+	for _, c := range cashiers {
+		pb := make([]dto.AggregatePaymentBreakdown, 0, len(c.payments))
+		for _, p := range c.payments {
+			pb = append(pb, *p)
+		}
+		sort.Slice(pb, func(i, j int) bool { return pb[i].Total > pb[j].Total })
+		resp.PerCashier = append(resp.PerCashier, dto.AggregateCashier{
+			CashierID:        c.cashierID,
+			Name:             c.name,
+			Orders:           c.orders,
+			Revenue:          c.revenue,
+			PaymentBreakdown: pb,
+		})
+	}
+	sort.Slice(resp.PerCashier, func(i, j int) bool {
+		return resp.PerCashier[i].Revenue > resp.PerCashier[j].Revenue
+	})
+
+	return resp, nil
+}
+
+func addPaymentBreakdown(m map[string]*dto.AggregatePaymentBreakdown, method string, amount float64) {
+	if method == "" {
+		method = "unknown"
+	}
+	p, ok := m[method]
+	if !ok {
+		p = &dto.AggregatePaymentBreakdown{Method: method}
+		m[method] = p
+	}
+	p.Count++
+	p.Total += amount
 }
 
 // primaryPaymentMethod picks the "headline" method for the orders.payment

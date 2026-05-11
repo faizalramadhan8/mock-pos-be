@@ -61,6 +61,28 @@ func (r *OrderRepository) FindCompletedSince(since time.Time) ([]entity.Order, e
 	return orders, nil
 }
 
+// FindCompletedForAggregate — fetch all completed orders in date range with
+// preloaded items + payments + member. Dipakai oleh /orders/aggregate
+// endpoint untuk hitung statistik server-side (cegah FE load full orders
+// untuk Reports + Dashboard yang scale buruk pada volume tinggi).
+//
+// from/to: YYYY-MM-DD string. Empty = no bound. Range inclusive both sides.
+func (r *OrderRepository) FindCompletedForAggregate(from, to string) ([]entity.Order, error) {
+	var orders []entity.Order
+	q := r.DB.Model(&entity.Order{}).Where("status = ?", "completed")
+	if from != "" {
+		q = q.Where("DATE(created_at) >= ?", from)
+	}
+	if to != "" {
+		q = q.Where("DATE(created_at) <= ?", to)
+	}
+	if err := q.Preload("Items").Preload("Payments").Preload("Member").
+		Order("created_at ASC").Find(&orders).Error; err != nil {
+		return nil, err
+	}
+	return orders, nil
+}
+
 func (r *OrderRepository) Create(order *entity.Order) error {
 	return r.DB.Create(order).Error
 }

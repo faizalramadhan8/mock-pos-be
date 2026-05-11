@@ -149,6 +149,18 @@ func (ctrl *OrderController) ResendPendingInvoice(c *fiber.Ctx) error {
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Invoice sent to customer"})
 }
 
+// Aggregate — server-side aggregation for /orders/aggregate.
+// Replaces FE-side aggregation that broke when orders > fetch limit.
+func (ctrl *OrderController) Aggregate(c *fiber.Ctx) error {
+	from := c.Query("from", "")
+	to := c.Query("to", "")
+	resp, fail := ctrl.Service.Aggregate(from, to)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "successfully", Body: resp})
+}
+
 func (ctrl *OrderController) GetStats(c *fiber.Ctx) error {
 	revenue, count, fail := ctrl.Service.GetRevenueStats()
 	if fail != nil {
