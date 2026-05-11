@@ -83,3 +83,36 @@ func (r *PurchaseInvoiceRepository) MarkReminderSent(tx *gorm.DB, id string, at 
 func (r *PurchaseInvoiceRepository) Delete(id string) error {
 	return r.DB.Delete(&entity.PurchaseInvoice{}, "id = ?", id).Error
 }
+
+// SumPaidInPeriod — total nilai faktur LUNAS dengan tanggal bayar di periode.
+// Dipakai untuk laporan Arus Kas (cash basis) — beda dari HPP yang dihitung
+// per item yang laku. Fallback ke invoice_date kalau paid_at NULL (COD legacy).
+func (r *PurchaseInvoiceRepository) SumPaidInPeriod(from, to string) (float64, error) {
+	var result struct{ Total float64 }
+	q := r.DB.Model(&entity.PurchaseInvoice{}).
+		Where("payment_status = ?", "paid")
+	if from != "" {
+		q = q.Where("DATE(COALESCE(paid_at, invoice_date)) >= ?", from)
+	}
+	if to != "" {
+		q = q.Where("DATE(COALESCE(paid_at, invoice_date)) <= ?", to)
+	}
+	err := q.Select("COALESCE(SUM(total_amount), 0) as total").Scan(&result).Error
+	return result.Total, err
+}
+
+// SumUnpaidByInvoiceDate — total faktur BELUM lunas yang invoice_date-nya di
+// periode. Info kewajiban cash flow yang masih tertunda.
+func (r *PurchaseInvoiceRepository) SumUnpaidByInvoiceDate(from, to string) (float64, error) {
+	var result struct{ Total float64 }
+	q := r.DB.Model(&entity.PurchaseInvoice{}).
+		Where("payment_status = ?", "unpaid")
+	if from != "" {
+		q = q.Where("DATE(invoice_date) >= ?", from)
+	}
+	if to != "" {
+		q = q.Where("DATE(invoice_date) <= ?", to)
+	}
+	err := q.Select("COALESCE(SUM(total_amount), 0) as total").Scan(&result).Error
+	return result.Total, err
+}
