@@ -25,6 +25,9 @@ func UseRouter(ctx context.Context, r fiber.Router) {
 	// Inventory (Stock Movements & Batches)
 	UseInventoryRouter(ctx, prefix)
 
+	// Purchase Invoices (Faktur Pembelian dari supplier — multi-line)
+	UsePurchaseInvoiceRouter(ctx, prefix)
+
 	// Members
 	UseMemberRouter(ctx, prefix)
 
