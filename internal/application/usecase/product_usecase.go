@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -343,6 +344,25 @@ func (s *ProductService) GetPriceHistory(productID, priceType string) ([]dto.Pro
 		out = append(out, row)
 	}
 	return out, nil
+}
+
+// NextSKU — generate SKU auto untuk produk baru dengan prefix tertentu
+// (biasanya dari nama kategori). Cek termasuk soft-deleted rows supaya tidak
+// collide dengan SKU yang "stuck" di soft-delete. Format: <PREFIX>-<NNN>
+// dengan zero-pad 3 digit.
+func (s *ProductService) NextSKU(prefix string) (string, *dto.ApiError) {
+	if prefix == "" {
+		prefix = "GEN"
+	}
+	maxNum, err := s.Repo.FindMaxSKUNumberByPrefix(prefix)
+	if err != nil {
+		return "", &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: err.Error()}
+	}
+	next := maxNum + 1
+	if next < 1 {
+		next = 1
+	}
+	return fmt.Sprintf("%s-%03d", prefix, next), nil
 }
 
 func (s *ProductService) toResponse(p *entity.Product) dto.ProductResponse {

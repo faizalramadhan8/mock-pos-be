@@ -18,6 +18,7 @@ func UseProductRouter(ctx context.Context, r fiber.Router) {
 	products := r.Group("/products", auth.AllowAll())
 	products.Get("/", ctrl.GetAll)
 	products.Get("/low-stock", ctrl.GetLowStock)
+	products.Get("/next-sku", ctrl.NextSKU)
 	products.Get("/sku/:sku", ctrl.GetBySKU)
 	products.Get("/:id/price-history", ctrl.GetPriceHistory)
 	products.Get("/:id", ctrl.GetByID)

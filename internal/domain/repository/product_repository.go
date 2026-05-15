@@ -90,3 +90,27 @@ func (r *ProductRepository) ExistsBySKU(sku string) (bool, error) {
 func (r *ProductRepository) Delete(id string) error {
 	return r.DB.Delete(&entity.Product{}, "id = ?", id).Error
 }
+
+// FindMaxSKUNumberByPrefix returns the highest numeric suffix among SKUs that
+// start with "<prefix>-". Pakai Unscoped() supaya ikut hitung soft-deleted
+// rows — penting karena unique constraint di tabel cek SEMUA row termasuk
+// yang ke-soft-delete. Tanpa Unscoped, FE auto-gen bisa balikkan number yang
+// "stuck" di soft-deleted row → 1062 duplicate entry error.
+func (r *ProductRepository) FindMaxSKUNumberByPrefix(prefix string) (int, error) {
+	var maxNum struct{ MaxNum *int }
+	pattern := prefix + "-%"
+	// Extract numeric part after the "-": CAST(SUBSTRING_INDEX(sku, '-', -1) AS UNSIGNED)
+	err := r.DB.
+		Unscoped().
+		Model(&entity.Product{}).
+		Where("sku LIKE ?", pattern).
+		Select("MAX(CAST(SUBSTRING_INDEX(sku, '-', -1) AS UNSIGNED)) as max_num").
+		Scan(&maxNum).Error
+	if err != nil {
+		return 0, err
+	}
+	if maxNum.MaxNum == nil {
+		return 0, nil
+	}
+	return *maxNum.MaxNum, nil
+}

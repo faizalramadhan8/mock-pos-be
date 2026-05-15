@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"strconv"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
@@ -67,6 +68,18 @@ func (ctrl *ProductController) GetBySKU(c *fiber.Ctx) error {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
 	}
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "successfully", Body: product})
+}
+
+// NextSKU — return next auto-generated SKU untuk prefix tertentu. Endpoint
+// ini aware soft-deleted SKUs (pakai Unscoped query di repo) supaya FE auto-
+// gen tidak collide dengan SKU yang stuck di tombstone row.
+func (ctrl *ProductController) NextSKU(c *fiber.Ctx) error {
+	prefix := strings.ToUpper(strings.TrimSpace(c.Query("prefix", "")))
+	sku, fail := ctrl.Service.NextSKU(prefix)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "successfully", Body: map[string]string{"sku": sku}})
 }
 
 func (ctrl *ProductController) GetLowStock(c *fiber.Ctx) error {
