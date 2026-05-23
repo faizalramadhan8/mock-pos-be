@@ -86,6 +86,10 @@ func (r *ExpenseRepository) Create(e *entity.Expense) error {
 }
 
 func (r *ExpenseRepository) Update(e *entity.Expense) error {
+	// Nil-out preloaded Category supaya GORM tidak re-sync FK dari association
+	// object yang masih point ke kategori lama (lihat product_repository.go
+	// untuk penjelasan detail bug GORM Save + Preload).
+	e.Category = nil
 	return r.DB.Save(e).Error
 }
 

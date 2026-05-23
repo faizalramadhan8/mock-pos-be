@@ -44,6 +44,10 @@ func (r *StockMovementRepository) Create(movement *entity.StockMovement) error {
 }
 
 func (r *StockMovementRepository) Update(movement *entity.StockMovement) error {
+	// Nil-out preloaded Product + Supplier (BelongsTo). Lihat product_repository.go
+	// untuk detail bug GORM Save + Preload.
+	movement.Product = nil
+	movement.Supplier = nil
 	return r.DB.Save(movement).Error
 }
 

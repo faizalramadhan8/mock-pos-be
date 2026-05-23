@@ -65,6 +65,15 @@ func (r *ProductRepository) Create(product *entity.Product) error {
 }
 
 func (r *ProductRepository) Update(product *entity.Product) error {
+	// CRITICAL: nil-kan preloaded association objects sebelum Save.
+	// FindByID Preload("Category") + Preload("Supplier"), jadi product struct
+	// punya 2 representasi FK: (1) CategoryID string, (2) Category pointer ke
+	// object lama. GORM Save akan auto-resync FK dari association object,
+	// menimpa CategoryID baru yang sudah di-set di usecase. Hasilnya update
+	// kategori (atau supplier) tampak sukses ke FE tapi DB tetap nilai lama.
+	// Nil-out di sini memastikan GORM hanya pakai FK string yang sudah diset.
+	product.Category = nil
+	product.Supplier = nil
 	return r.DB.Save(product).Error
 }
 

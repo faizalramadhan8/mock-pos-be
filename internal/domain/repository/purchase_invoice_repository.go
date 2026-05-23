@@ -70,6 +70,10 @@ func (r *PurchaseInvoiceRepository) Create(inv *entity.PurchaseInvoice) error {
 }
 
 func (r *PurchaseInvoiceRepository) Update(inv *entity.PurchaseInvoice) error {
+	// Nil-out preloaded Supplier (BelongsTo) supaya GORM tidak re-sync FK dari
+	// association object lama. Items adalah HasMany — biarkan saja, GORM
+	// handle berbeda. Lihat product_repository.go untuk detail bug.
+	inv.Supplier = nil
 	return r.DB.Save(inv).Error
 }
 

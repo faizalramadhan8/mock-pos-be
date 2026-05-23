@@ -88,6 +88,10 @@ func (r *OrderRepository) Create(order *entity.Order) error {
 }
 
 func (r *OrderRepository) Update(order *entity.Order) error {
+	// Nil-out preloaded Member (BelongsTo). Lihat product_repository.go untuk
+	// detail bug GORM Save + Preload. Items dan Payments HasMany — handled
+	// terpisah oleh GORM.
+	order.Member = nil
 	return r.DB.Save(order).Error
 }
 
