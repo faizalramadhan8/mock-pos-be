@@ -16,7 +16,7 @@ type CreatePurchaseInvoiceRequest struct {
 	InvoiceNumber  string                       `json:"invoice_number"` // opsional, bebas
 	SupplierID     string                       `json:"supplier_id" validate:"required"`
 	InvoiceDate    string                       `json:"invoice_date"`   // YYYY-MM-DD, default today
-	PaymentTerms   string                       `json:"payment_terms" validate:"required,oneof=COD NET7 NET14 NET30 NET60 NET90"`
+	PaymentTerms   string                       `json:"payment_terms" validate:"required,oneof=COD NET7 NET14 NET21 NET30 NET60 NET90"`
 	DueDate        string                       `json:"due_date"`       // YYYY-MM-DD opsional (auto-calc dari invoice_date + payment_terms kalau kosong)
 	SubtotalAmount float64                      `json:"subtotal_amount" validate:"min=0"`
 	PPNAmount      float64                      `json:"ppn_amount" validate:"min=0"`
