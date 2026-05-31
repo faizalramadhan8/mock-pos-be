@@ -114,60 +114,13 @@ func (s *PurchaseInvoiceService) Create(req dto.CreatePurchaseInvoiceRequest, us
 			}
 		}
 
-		// Create batch (kalau ada ED, untuk FIFO tracking)
-		var batchID *string
-		if expiryPtr != nil {
-			batchNumber := genBatchNumber(invoice.InvoiceDate)
-			edStr := expiryPtr.Format("2006-01-02")
-			batch := &entity.StockBatch{
-				ID:          uuid.New().String(),
-				ProductID:   itemReq.ProductID,
-				Quantity:    qtyIndividual,
-				ExpiryDate:  &edStr,
-				BatchNumber: batchNumber,
-				Note:        "From PO #" + shortID(invoice.ID),
-			}
-			if err := tx.Create(batch).Error; err != nil {
-				tx.Rollback()
-				return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to create batch"}
-			}
-			batchID = &batch.ID
-		}
+		// Owner request: Faktur Barang Masuk PURE RECORD only.
+		// Tidak buat stock_batches, tidak buat stock_movements, tidak naikkan
+		// products.stock. Owner manage stok manual via Edit Produk / Stock
+		// Adjustment / Opname. Faktur cuma sebagai history "kapan beli apa
+		// dari supplier". Field batchID + movementID di-set nil.
 
-		// Create stock_movement record (audit trail)
-		edStrPtr := (*string)(nil)
-		if expiryPtr != nil {
-			s := expiryPtr.Format("2006-01-02")
-			edStrPtr = &s
-		}
-		supplierIDPtr := &req.SupplierID
-		movement := &entity.StockMovement{
-			ID:         uuid.New().String(),
-			ProductID:  itemReq.ProductID,
-			Type:       "in",
-			Quantity:   qtyIndividual,
-			UnitType:   unitType,
-			UnitPrice:  itemReq.UnitPrice,
-			Reason:     "restock",
-			Note:       "PO #" + shortID(invoice.ID) + " — " + req.SupplierID,
-			ExpiryDate: edStrPtr,
-			SupplierID: supplierIDPtr,
-			CreatedBy:  userID,
-		}
-		if err := tx.Create(movement).Error; err != nil {
-			tx.Rollback()
-			return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to create movement"}
-		}
-
-		// Increment products.stock
-		if err := tx.Model(&entity.Product{}).Where("id = ?", itemReq.ProductID).
-			Update("stock", gorm.Expr("stock + ?", qtyIndividual)).Error; err != nil {
-			tx.Rollback()
-			return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to update stock"}
-		}
-
-		// Insert invoice item with batch + movement reference
-		movID := movement.ID
+		// Insert invoice item — pure record only.
 		item := &entity.PurchaseInvoiceItem{
 			ID:                uuid.New().String(),
 			PurchaseInvoiceID: invoice.ID,
@@ -176,8 +129,8 @@ func (s *PurchaseInvoiceService) Create(req dto.CreatePurchaseInvoiceRequest, us
 			UnitType:          unitType,
 			UnitPrice:         itemReq.UnitPrice,
 			ExpiryDate:        expiryPtr,
-			BatchID:           batchID,
-			MovementID:        &movID,
+			BatchID:           nil,
+			MovementID:        nil,
 			Note:              itemReq.Note,
 		}
 		if err := tx.Create(item).Error; err != nil {
@@ -249,6 +202,122 @@ func (s *PurchaseInvoiceService) MarkAsPaid(id string) (*dto.PurchaseInvoiceResp
 		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to update invoice"}
 	}
 
+	resp := s.toResponse(inv)
+	return &resp, nil
+}
+
+// Update — replace faktur header + items dengan data baru. Strategy: full
+// replace untuk items (delete all old, insert new) supaya tidak ribet handle
+// diff per-item. Aman karena Faktur sekarang pure record (tidak ada batch /
+// movement / stock side-effects yang harus di-revert).
+func (s *PurchaseInvoiceService) Update(id string, req dto.CreatePurchaseInvoiceRequest, userID string) (*dto.PurchaseInvoiceResponse, *dto.ApiError) {
+	inv, err := s.Repo.FindByID(id)
+	if err != nil {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Invoice not found"}
+	}
+
+	// Parse invoice_date
+	invoiceDate := inv.InvoiceDate
+	if req.InvoiceDate != "" {
+		if t, perr := time.Parse("2006-01-02", req.InvoiceDate); perr == nil {
+			invoiceDate = t
+		}
+	}
+
+	// Parse / compute due_date
+	var dueDate *time.Time
+	if req.DueDate != "" {
+		if t, perr := time.Parse("2006-01-02", req.DueDate); perr == nil {
+			dueDate = &t
+		}
+	} else {
+		if days := parseNetDays(req.PaymentTerms); days > 0 {
+			d := invoiceDate.AddDate(0, 0, days)
+			dueDate = &d
+		}
+		if req.PaymentTerms == "COD" {
+			dueDate = &invoiceDate
+		}
+	}
+
+	tx := s.DB.Begin()
+
+	// Update header fields
+	inv.InvoiceNumber = strings.TrimSpace(req.InvoiceNumber)
+	inv.SupplierID = req.SupplierID
+	inv.InvoiceDate = invoiceDate
+	inv.DueDate = dueDate
+	inv.PaymentTerms = req.PaymentTerms
+	// Preserve paid status — jangan reset status pembayaran saat edit header.
+	// Owner edit header (mis. ralat tanggal/note) tidak boleh undo "Lunas".
+	// Status hanya berubah via MarkAsPaid endpoint.
+	inv.SubtotalAmount = req.SubtotalAmount
+	inv.PPNAmount = req.PPNAmount
+	inv.TotalAmount = req.TotalAmount
+	inv.Note = req.Note
+
+	if err := tx.Save(inv).Error; err != nil {
+		tx.Rollback()
+		s.Log.Error().Err(err).Msg("Failed to update purchase invoice header")
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to update invoice"}
+	}
+
+	// Hapus all line items lama (hard delete — pure record, no audit needed).
+	if err := tx.Where("purchase_invoice_id = ?", inv.ID).Delete(&entity.PurchaseInvoiceItem{}).Error; err != nil {
+		tx.Rollback()
+		s.Log.Error().Err(err).Msg("Failed to delete old invoice items")
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to update invoice items"}
+	}
+
+	// Insert items baru — pure record, no batch/movement/stock side-effect.
+	for _, itemReq := range req.Items {
+		product, perr := s.ProductRepo.FindByID(itemReq.ProductID)
+		if perr != nil {
+			tx.Rollback()
+			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Product not found: " + itemReq.ProductID}
+		}
+		qtyIndividual := itemReq.Quantity
+		unitType := itemReq.UnitType
+		if unitType == "" {
+			unitType = "individual"
+		}
+		if unitType == "box" && product.QtyPerBox > 0 {
+			qtyIndividual = itemReq.Quantity * product.QtyPerBox
+		}
+
+		var expiryPtr *time.Time
+		if itemReq.ExpiryDate != "" {
+			if t, perr := time.Parse("2006-01-02", itemReq.ExpiryDate); perr == nil {
+				expiryPtr = &t
+			}
+		}
+
+		item := &entity.PurchaseInvoiceItem{
+			ID:                uuid.New().String(),
+			PurchaseInvoiceID: inv.ID,
+			ProductID:         itemReq.ProductID,
+			Quantity:          qtyIndividual,
+			UnitType:          unitType,
+			UnitPrice:         itemReq.UnitPrice,
+			ExpiryDate:        expiryPtr,
+			BatchID:           nil,
+			MovementID:        nil,
+			Note:              itemReq.Note,
+		}
+		if err := tx.Create(item).Error; err != nil {
+			tx.Rollback()
+			s.Log.Error().Err(err).Msg("Failed to create updated invoice item")
+			return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to update invoice items"}
+		}
+	}
+
+	tx.Commit()
+
+	reloaded, _ := s.Repo.FindByID(inv.ID)
+	if reloaded != nil {
+		inv = reloaded
+	}
+	_ = userID // reserved for future audit log
 	resp := s.toResponse(inv)
 	return &resp, nil
 }
@@ -358,8 +427,3 @@ func paymentStatusFromTerms(terms string) string {
 	return "unpaid"
 }
 
-// genBatchNumber — format B-YYYYMMDD-NNN dari invoice date + random suffix
-// supaya batch tidak collide kalau banyak faktur masuk dalam 1 hari.
-func genBatchNumber(invoiceDate time.Time) string {
-	return "B-" + invoiceDate.Format("20060102") + "-" + uuid.New().String()[:4]
-}

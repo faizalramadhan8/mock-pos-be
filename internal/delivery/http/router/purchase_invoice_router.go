@@ -22,6 +22,7 @@ func UsePurchaseInvoiceRouter(ctx context.Context, r fiber.Router) {
 	pi.Get("/", ctrl.GetAll)
 	pi.Get("/:id", ctrl.GetByID)
 	pi.Post("/", auth.AllowAdmins(), ctrl.Create)
+	pi.Put("/:id", auth.AllowAdmins(), ctrl.Update)
 	pi.Post("/:id/mark-paid", auth.AllowAdmins(), ctrl.MarkAsPaid)
 	pi.Delete("/:id", auth.AllowAdmins(), ctrl.Delete)
 }
