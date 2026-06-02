@@ -228,12 +228,13 @@ func (s *OrderService) Create(req dto.CreateOrderRequest, userID string) (*dto.O
 		order = created
 	}
 
-	// Fire-and-forget WhatsApp ke customer (struk).
-	go s.sendReceiptWA(order, userID)
-
-	// Notifikasi admin: HANYA untuk transaksi besar (≥ Rp 500.000) supaya
-	// quota WA hemat + nomor toko tidak ke-flag karena volume tinggi.
-	// Bu Santi confirm: "Iya lebih diset notifikasi dikirim pd transaksi >=500,000".
+	// WA struk ke customer: TIDAK auto-send lagi. Kasir kirim manual via
+	// tombol "Kirim WA" di modal sukses POS — request owner setelah customer
+	// kadang bingung dapat fisik + WA bersamaan. Manual send tetap pakai
+	// endpoint ResendReceiptWA (POST /orders/:id/send-wa).
+	//
+	// Notifikasi admin tetap auto: HANYA untuk transaksi besar (≥ Rp 500.000)
+	// supaya quota WA hemat + nomor toko tidak ke-flag karena volume tinggi.
 	if order.Total >= largeTransactionThreshold {
 		go s.sendLargeTransactionNotificationWA(order, userID)
 	}
@@ -284,52 +285,6 @@ func (s *OrderService) ResendReceiptWA(orderID, userID string) *dto.ApiError {
 		return &dto.ApiError{StatusCode: fiber.ErrBadGateway, Message: "Failed to send WhatsApp receipt: " + sendErr.Error()}
 	}
 	return nil
-}
-
-// sendReceiptWA dispatches a WhatsApp receipt to the member associated with
-// the order. No-op if WA is disabled, order has no member, or member has no
-// valid phone number. Runs in its own goroutine — all errors are logged.
-func (s *OrderService) sendReceiptWA(order *entity.Order, userID string) {
-	if s.WA == nil || !s.WA.Enabled() {
-		return
-	}
-
-	// Prefer member phone; fall back to customer_phone (non-member who
-	// provided a number at checkout).
-	phone := ""
-	if order.Member != nil && order.Member.Phone != "" {
-		phone = order.Member.Phone
-	} else if order.CustomerPhone != "" {
-		phone = order.CustomerPhone
-	}
-	if phone == "" {
-		return
-	}
-
-	storeName := "Toko Bahan Kue Santi"
-	storeAddress, storePhone := "", ""
-	if settings, err := s.SettingsRepo.Get(); err == nil && settings != nil {
-		if settings.StoreName != "" {
-			storeName = settings.StoreName
-		}
-		storeAddress = settings.StoreAddress
-		storePhone = settings.StorePhone
-	}
-	cashierName := ""
-	if u, err := s.AuthRepo.FindByID(userID); err == nil && u != nil {
-		cashierName = u.FullName
-	}
-
-	text := whatsapp.FormatReceipt(order, storeName, storeAddress, storePhone, cashierName)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	if err := s.WA.SendText(ctx, phone, text); err != nil {
-		s.Log.Warn().Err(err).
-			Str("order_id", order.ID).
-			Str("recipient_phone", phone).
-			Msg("Failed to send WA receipt")
-	}
 }
 
 // sendLargeTransactionNotificationWA notifies admin/superadmin owners (with
