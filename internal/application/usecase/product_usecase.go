@@ -17,6 +17,7 @@ import (
 
 type ProductService struct {
 	Log         *zerolog.Logger
+	DB          *gorm.DB
 	Repo        *repository.ProductRepository
 	HistoryRepo *repository.ProductPriceHistoryRepository
 }
@@ -25,6 +26,7 @@ func NewProductService(ctx context.Context, db *gorm.DB) *ProductService {
 	logger := ctx.Value(enum.LoggerCtxKey).(*zerolog.Logger)
 	return &ProductService{
 		Log:         logger,
+		DB:          db,
 		Repo:        repository.NewProductRepository(ctx, db),
 		HistoryRepo: repository.NewProductPriceHistoryRepository(ctx, db),
 	}
@@ -139,13 +141,48 @@ func (s *ProductService) Create(req dto.CreateProductRequest, userID string) (*d
 		product.QtyPerBox = 1
 	}
 
-	if err := s.Repo.Create(product); err != nil {
+	// Wrap product create + initial stock movement dalam transaksi atomic.
+	// Kalau salah satu gagal, rollback supaya tidak ada produk tanpa audit
+	// trail atau audit trail tanpa produk.
+	tx := s.DB.Begin()
+
+	if err := tx.Create(product).Error; err != nil {
+		tx.Rollback()
 		s.Log.Error().Err(err).Msg("Failed to create product")
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to create product"}
+	}
+
+	// Kalau ada stok awal > 0, insert stock_movement reason='initial' supaya
+	// audit trail per produk komplit. Sebelum fix ini, init stock di-set
+	// langsung ke products.stock tanpa movement record → audit selisih jadi
+	// false signal (total_in = 0 walau stok awal ada).
+	if product.Stock > 0 {
+		movement := &entity.StockMovement{
+			ID:        uuid.New().String(),
+			ProductID: product.ID,
+			Type:      "in",
+			Quantity:  product.Stock,
+			UnitType:  "individual",
+			UnitPrice: product.PurchasePrice,
+			Reason:    "initial",
+			Note:      "Stok awal saat produk dibuat",
+			CreatedBy: userID,
+		}
+		if err := tx.Create(movement).Error; err != nil {
+			tx.Rollback()
+			s.Log.Error().Err(err).Msg("Failed to create initial stock movement")
+			return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to create initial stock movement"}
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		s.Log.Error().Err(err).Msg("Failed to commit product create")
 		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to create product"}
 	}
 
 	// Seed price history with the initial regular/purchase/member rows so
 	// subsequent edits already have a closed predecessor to compare against.
+	// Best-effort: di luar transaksi karena history audit only (not critical).
 	var changer *string
 	if userID != "" {
 		changer = &userID
