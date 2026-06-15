@@ -63,17 +63,25 @@ func FormatReceipt(order *entity.Order, storeName, storeAddress, storePhone, cas
 
 	// Items: 2-line per item (nama+qty di atas, harga indented di bawah) — WA
 	// pakai variable-width font, single-line dengan column alignment tidak
-	// reliable. Indent membuat harga gampang di-scan.
+	// reliable. Indent membuat harga gampang di-scan. Item yang ditebus pakai
+	// poin di-tag "🎁" + value "−X poin" (bukan rupiah), dan tidak masuk
+	// gross subtotal — mereka dilaporkan terpisah di bagian summary.
 	var memberSavings, gross float64
+	var pointsUsed int
 	for _, item := range order.Items {
+		lineTotal := item.UnitPrice * float64(item.Quantity)
+		if item.RedeemedWithPoints {
+			pointsUsed += int(lineTotal)
+			fmt.Fprintf(&b, "🎁 %s ×%d\n", item.Name, item.Quantity)
+			fmt.Fprintf(&b, "   −%s poin\n", thousand(int64(lineTotal)))
+			continue
+		}
 		regular := item.UnitPrice
 		if item.RegularPrice != nil && *item.RegularPrice > item.UnitPrice {
 			regular = *item.RegularPrice
 			memberSavings += (regular - item.UnitPrice) * float64(item.Quantity)
 		}
 		gross += regular * float64(item.Quantity)
-
-		lineTotal := item.UnitPrice * float64(item.Quantity)
 		fmt.Fprintf(&b, "%s ×%d\n", item.Name, item.Quantity)
 		fmt.Fprintf(&b, "   %s\n", rp(lineTotal))
 	}
@@ -84,11 +92,41 @@ func FormatReceipt(order *entity.Order, storeName, storeAddress, storePhone, cas
 	if memberSavings > 0 {
 		fmt.Fprintf(&b, "Hemat Member: -%s\n", rp(memberSavings))
 	}
+	if pointsUsed > 0 {
+		fmt.Fprintf(&b, "Poin Dipakai: -%s poin\n", thousand(int64(pointsUsed)))
+	}
 	fmt.Fprintf(&b, "*Total: %s*\n", rp(order.Total))
+
+	// Poin diperoleh — query best-effort via member_point_movements diluar
+	// fungsi ini (caller bisa kirim via parameter). Untuk WA, kita pakai
+	// pre-computed kalau ada. Saat ini receipt.go tidak punya akses DB; jadi
+	// kalau caller mau tampilkan, kirim via signature yang lebih kaya. Untuk
+	// MVP, biarkan kosong di WA — tampil di FE struk modal saja.
+
 	b.WriteString("─────────────────\n")
 	b.WriteString("_Barang yang sudah dibeli tidak dapat ditukar atau dikembalikan._\n\n")
 	b.WriteString("Terimakasih sudah berbelanja!")
 	return b.String()
+}
+
+// thousand formats an integer with "." thousand separators (no Rp prefix).
+func thousand(n int64) string {
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	s := fmt.Sprintf("%d", n)
+	out := make([]byte, 0, len(s)+len(s)/3)
+	for i, c := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			out = append(out, '.')
+		}
+		out = append(out, byte(c))
+	}
+	if neg {
+		return "-" + string(out)
+	}
+	return string(out)
 }
 
 // stripNonDigits returns only the digit characters of s.

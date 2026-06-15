@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/faizalramadhan/pos-be/internal/application/usecase"
 	"github.com/faizalramadhan/pos-be/internal/domain/entity"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
@@ -24,6 +25,8 @@ type Scheduler struct {
 	MoveRepo         *repository.StockMovementRepository
 	PurchaseInvRepo  *repository.PurchaseInvoiceRepository
 	AuthRepo         *repository.AuthRepository
+	MemberRepo       *repository.MemberRepository
+	PointMoveRepo    *repository.MemberPointMovementRepository
 	WA               *whatsapp.Service
 }
 
@@ -39,6 +42,8 @@ func NewScheduler(ctx context.Context, db *gorm.DB) *Scheduler {
 		MoveRepo:        repository.NewStockMovementRepository(ctx, db),
 		PurchaseInvRepo: repository.NewPurchaseInvoiceRepository(ctx, db),
 		AuthRepo:        repository.NewAuthRepository(ctx, db),
+		MemberRepo:      repository.NewMemberRepository(ctx, db),
+		PointMoveRepo:   repository.NewMemberPointMovementRepository(ctx, db),
 		WA:              wa,
 	}
 }
@@ -74,6 +79,20 @@ func (s *Scheduler) Start() {
 			s.runPurchaseInvoiceReminder()
 		}
 	}()
+
+	// Member points expiry — reset semua saldo ke 0 setiap 1 Januari 00:01
+	// WIB. Audit movements 'expire-reset' di-insert per member yang punya
+	// saldo > 0 supaya kapan & berapa hangus tetap bisa ditrace.
+	go func() {
+		s.Log.Info().Msg("Member points expiry scheduler started")
+		jkt := jktLocation()
+		for {
+			nowLocal := time.Now().In(jkt)
+			next := time.Date(nowLocal.Year()+1, time.January, 1, 0, 1, 0, 0, jkt)
+			time.Sleep(time.Until(next))
+			s.runMemberPointsExpiry()
+		}
+	}()
 }
 
 // jktLocation returns Asia/Jakarta tz (fallback UTC) — semua cron mengikuti
@@ -84,6 +103,48 @@ func jktLocation() *time.Location {
 		return time.UTC
 	}
 	return loc
+}
+
+// runMemberPointsExpiry — set semua member.points = 0 dan insert audit
+// movement 'expire-reset' per member yang punya saldo > 0 sebelum reset.
+// Per Bu Santi: poin hangus 1 Januari. Audit trail penting supaya kalau
+// member tanya "kenapa saya nol", kasir bisa tunjuk movement-nya.
+func (s *Scheduler) runMemberPointsExpiry() {
+	members, err := s.MemberRepo.FindAllWithPositivePoints()
+	if err != nil {
+		s.Log.Error().Err(err).Msg("Member points expiry: query members failed")
+		return
+	}
+	if len(members) == 0 {
+		s.Log.Info().Msg("Member points expiry: tidak ada member dengan saldo > 0")
+		return
+	}
+
+	now := time.Now()
+	err = s.DB.Transaction(func(tx *gorm.DB) error {
+		for _, m := range members {
+			if err := tx.Create(&entity.MemberPointMovement{
+				ID:           uuid.New().String(),
+				MemberID:     m.ID,
+				Type:         "expire-reset",
+				Points:       -m.Points,
+				BalanceAfter: 0,
+				Note:         "Reset tahunan 1 Januari",
+				CreatedAt:    now,
+			}).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Model(&entity.Member{}).Where("points > 0").Update("points", 0).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		s.Log.Error().Err(err).Msg("Member points expiry: transaction failed")
+		return
+	}
+	s.Log.Info().Int("members_reset", len(members)).Msg("Member points expiry: done")
 }
 
 // runPurchaseInvoiceReminder kirim WA H-0 ke admin untuk faktur jatuh tempo

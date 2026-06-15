@@ -15,18 +15,50 @@ import (
 )
 
 type MemberService struct {
-	Log       *zerolog.Logger
-	Repo      *repository.MemberRepository
-	OrderRepo *repository.OrderRepository
+	Log           *zerolog.Logger
+	Repo          *repository.MemberRepository
+	OrderRepo     *repository.OrderRepository
+	PointMoveRepo *repository.MemberPointMovementRepository
 }
 
 func NewMemberService(ctx context.Context, db *gorm.DB) *MemberService {
 	logger := ctx.Value(enum.LoggerCtxKey).(*zerolog.Logger)
 	return &MemberService{
-		Log:       logger,
-		Repo:      repository.NewMemberRepository(ctx, db),
-		OrderRepo: repository.NewOrderRepository(ctx, db),
+		Log:           logger,
+		Repo:          repository.NewMemberRepository(ctx, db),
+		OrderRepo:     repository.NewOrderRepository(ctx, db),
+		PointMoveRepo: repository.NewMemberPointMovementRepository(ctx, db),
 	}
+}
+
+// GetPointMovements returns riwayat poin for one member (newest first).
+func (s *MemberService) GetPointMovements(memberID string, limit int) ([]dto.MemberPointMovementResponse, *dto.ApiError) {
+	if _, err := s.Repo.FindByID(memberID); err != nil {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Member not found"}
+	}
+	rows, err := s.PointMoveRepo.FindByMember(memberID, limit)
+	if err != nil {
+		s.Log.Error().Err(err).Msg("Failed to fetch point movements")
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to fetch point movements"}
+	}
+	out := make([]dto.MemberPointMovementResponse, 0, len(rows))
+	for _, r := range rows {
+		note := ""
+		if r.Note != "" {
+			note = r.Note
+		}
+		out = append(out, dto.MemberPointMovementResponse{
+			ID:           r.ID,
+			OrderID:      r.OrderID,
+			Type:         r.Type,
+			Points:       r.Points,
+			BalanceAfter: r.BalanceAfter,
+			Note:         note,
+			CreatedBy:    r.CreatedBy,
+			CreatedAt:    r.CreatedAt.Format(time.RFC3339),
+		})
+	}
+	return out, nil
 }
 
 func (s *MemberService) GetAll(search string, page, limit int) ([]dto.MemberResponse, int64, *dto.ApiError) {
@@ -96,6 +128,7 @@ func toMemberResponse(m *entity.Member) dto.MemberResponse {
 		Phone:        m.Phone,
 		Address:      m.Address,
 		MemberNumber: memberNumber,
+		Points:       m.Points,
 		CreatedAt:    m.CreatedAt.Format(time.RFC3339),
 	}
 }

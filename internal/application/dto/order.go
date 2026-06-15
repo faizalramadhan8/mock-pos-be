@@ -60,6 +60,10 @@ type CreateOrderItemRequest struct {
 	DiscountType   string   `json:"discount_type"`
 	DiscountValue  float64  `json:"discount_value"`
 	DiscountAmount float64  `json:"discount_amount"`
+	// RedeemWithPoints: kalau true, item ini dibayar dari member.points
+	// (tebus barang). UnitPrice × Quantity dipotong dari saldo poin.
+	// Harga item tidak include cash subtotal — supaya tidak earn poin lagi.
+	RedeemWithPoints bool `json:"redeem_with_points,omitempty"`
 }
 
 type OrderMemberInfo struct {
@@ -87,8 +91,14 @@ type OrderResponse struct {
 	OrderDiscountType  string                 `json:"order_discount_type,omitempty"`
 	OrderDiscountValue float64                `json:"order_discount_value,omitempty"`
 	OrderDiscount      float64                `json:"order_discount,omitempty"`
-	CreatedBy          string                 `json:"created_by"`
-	CreatedAt          string                 `json:"created_at"`
+	// PointsUsed = total poin yang ditebus pakai item RedeemedWithPoints
+	// pada order ini. PointsEarned = poin yang didapat (kelipatan 100k).
+	// Dua field ini snapshot di response untuk display di receipt + UI;
+	// source of truth tetap di member_point_movements.
+	PointsUsed   int `json:"points_used,omitempty"`
+	PointsEarned int `json:"points_earned,omitempty"`
+	CreatedBy    string `json:"created_by"`
+	CreatedAt    string `json:"created_at"`
 }
 
 type OrderPaymentResponse struct {
@@ -98,17 +108,18 @@ type OrderPaymentResponse struct {
 }
 
 type OrderItemResponse struct {
-	ID             string   `json:"id"`
-	ProductID      string   `json:"product_id"`
-	Name           string   `json:"name"`
-	Quantity       int      `json:"quantity"`
-	UnitType       string   `json:"unit_type"`
-	UnitPrice      float64  `json:"unit_price"`
-	PurchasePrice  float64  `json:"purchase_price,omitempty"`
-	RegularPrice   *float64 `json:"regular_price,omitempty"`
-	DiscountType   string   `json:"discount_type,omitempty"`
-	DiscountValue  float64  `json:"discount_value,omitempty"`
-	DiscountAmount float64  `json:"discount_amount,omitempty"`
+	ID                 string   `json:"id"`
+	ProductID          string   `json:"product_id"`
+	Name               string   `json:"name"`
+	Quantity           int      `json:"quantity"`
+	UnitType           string   `json:"unit_type"`
+	UnitPrice          float64  `json:"unit_price"`
+	PurchasePrice      float64  `json:"purchase_price,omitempty"`
+	RegularPrice       *float64 `json:"regular_price,omitempty"`
+	DiscountType       string   `json:"discount_type,omitempty"`
+	DiscountValue      float64  `json:"discount_value,omitempty"`
+	DiscountAmount     float64  `json:"discount_amount,omitempty"`
+	RedeemedWithPoints bool     `json:"redeemed_with_points,omitempty"`
 }
 
 type OrderListRequest struct {

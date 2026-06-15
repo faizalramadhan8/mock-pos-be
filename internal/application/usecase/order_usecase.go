@@ -17,6 +17,7 @@ import (
 	"github.com/faizalramadhan/pos-be/internal/infrastructure/whatsapp"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Threshold untuk transaksi "besar" yang trigger notif WA ke admin/owner.
@@ -33,6 +34,8 @@ type OrderService struct {
 	BatchRepo    *repository.StockBatchRepository
 	SettingsRepo *repository.SettingsRepository
 	AuthRepo     *repository.AuthRepository
+	MemberRepo   *repository.MemberRepository
+	PointMoveRepo *repository.MemberPointMovementRepository
 	WA           *whatsapp.Service
 	Configs      *config.Config
 }
@@ -42,16 +45,41 @@ func NewOrderService(ctx context.Context, db *gorm.DB) *OrderService {
 	wa, _ := ctx.Value(enum.WhatsAppCtxKey).(*whatsapp.Service)
 	cfg, _ := ctx.Value(enum.ConfigCtxKey).(*config.Config)
 	return &OrderService{
-		Log:          logger,
-		DB:           db,
-		Repo:         repository.NewOrderRepository(ctx, db),
-		ProductRepo:  repository.NewProductRepository(ctx, db),
-		BatchRepo:    repository.NewStockBatchRepository(ctx, db),
-		SettingsRepo: repository.NewSettingsRepository(ctx, db),
-		AuthRepo:     repository.NewAuthRepository(ctx, db),
-		WA:           wa,
-		Configs:      cfg,
+		Log:           logger,
+		DB:            db,
+		Repo:          repository.NewOrderRepository(ctx, db),
+		ProductRepo:   repository.NewProductRepository(ctx, db),
+		BatchRepo:     repository.NewStockBatchRepository(ctx, db),
+		SettingsRepo:  repository.NewSettingsRepository(ctx, db),
+		AuthRepo:      repository.NewAuthRepository(ctx, db),
+		MemberRepo:    repository.NewMemberRepository(ctx, db),
+		PointMoveRepo: repository.NewMemberPointMovementRepository(ctx, db),
+		WA:            wa,
+		Configs:       cfg,
 	}
+}
+
+// Earn 1.000 poin per kelipatan Rp 100.000 di cash actual. STRICT —
+// hanya kelipatan tepat dapat poin, 150rb/199rb tidak.
+const (
+	pointsEarnPerUnit    = 1_000
+	pointsEarnUnitAmount = 100_000.0
+)
+
+// calculateEarnedPoints — strict exact-multiple rule. 100rb=1000, 150rb=0,
+// 200rb=2000, 250rb=0, 300rb=3000. Cash actual = total cash setelah
+// dikurangi item yang ditebus pakai poin.
+func calculateEarnedPoints(cashActual float64) int {
+	if cashActual < pointsEarnUnitAmount {
+		return 0
+	}
+	// Bandingkan integer untuk hindari float-comparison rounding.
+	cents := int64(cashActual * 100)
+	unitCents := int64(pointsEarnUnitAmount * 100)
+	if cents%unitCents != 0 {
+		return 0
+	}
+	return int(cents/unitCents) * pointsEarnPerUnit
 }
 
 func (s *OrderService) GetAll(status string, page, limit int) ([]dto.OrderResponse, int64, *dto.ApiError) {
@@ -86,19 +114,45 @@ func (s *OrderService) GetByID(id string) (*dto.OrderResponse, *dto.ApiError) {
 }
 
 func (s *OrderService) Create(req dto.CreateOrderRequest, userID string) (*dto.OrderResponse, *dto.ApiError) {
+	// Hitung poin yang akan ditebus per cart: sum harga item flagged
+	// redeem_with_points. Validate member ada & saldo cukup di awal,
+	// supaya tidak mid-checkout rollback besar.
+	var pointsToRedeem int
+	var cashSubtotal float64
+	for _, item := range req.Items {
+		lineTotal := item.UnitPrice * float64(item.Quantity)
+		if item.RedeemWithPoints {
+			pointsToRedeem += int(lineTotal)
+		} else {
+			cashSubtotal += lineTotal
+		}
+	}
+	if pointsToRedeem > 0 {
+		if req.MemberID == nil || *req.MemberID == "" {
+			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Tebus barang dengan poin perlu pilih member dulu"}
+		}
+		member, err := s.MemberRepo.FindByID(*req.MemberID)
+		if err != nil {
+			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Member tidak ditemukan"}
+		}
+		if member.Points < pointsToRedeem {
+			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: fmt.Sprintf("Saldo poin tidak cukup: butuh %d, tersedia %d", pointsToRedeem, member.Points)}
+		}
+	}
+
 	// Split-payment validation: if payments are provided, their sum must
-	// cover the order total. If missing (back-compat), fall back to a
-	// single payment with the whole amount.
+	// cover the cash portion (after subtracting redeemed items). When no
+	// item is redeemed, cashSubtotal == req.Total.
 	payments := req.Payments
 	if len(payments) == 0 {
-		payments = []dto.CreateOrderPaymentRequest{{Method: req.Payment, Amount: req.Total}}
+		payments = []dto.CreateOrderPaymentRequest{{Method: req.Payment, Amount: cashSubtotal}}
 	}
 	var paidSum float64
 	for _, p := range payments {
 		paidSum += p.Amount
 	}
-	if paidSum+0.001 < req.Total { // tolerate fp rounding
-		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: fmt.Sprintf("Kurang bayar: total Rp %.0f, diterima Rp %.0f", req.Total, paidSum)}
+	if paidSum+0.001 < cashSubtotal { // tolerate fp rounding
+		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: fmt.Sprintf("Kurang bayar: cash perlu Rp %.0f, diterima Rp %.0f", cashSubtotal, paidSum)}
 	}
 
 	tx := s.DB.Begin()
@@ -131,18 +185,19 @@ func (s *OrderService) Create(req dto.CreateOrderRequest, userID string) (*dto.O
 
 	for _, item := range req.Items {
 		orderItem := entity.OrderItem{
-			ID:             uuid.New().String(),
-			OrderID:        order.ID,
-			ProductID:      item.ProductID,
-			Name:           item.Name,
-			Quantity:       item.Quantity,
-			UnitType:       item.UnitType,
-			UnitPrice:      item.UnitPrice,
-			PurchasePrice:  item.PurchasePrice,
-			RegularPrice:   item.RegularPrice,
-			DiscountType:   item.DiscountType,
-			DiscountValue:  item.DiscountValue,
-			DiscountAmount: item.DiscountAmount,
+			ID:                 uuid.New().String(),
+			OrderID:            order.ID,
+			ProductID:          item.ProductID,
+			Name:               item.Name,
+			Quantity:           item.Quantity,
+			UnitType:           item.UnitType,
+			UnitPrice:          item.UnitPrice,
+			PurchasePrice:      item.PurchasePrice,
+			RegularPrice:       item.RegularPrice,
+			DiscountType:       item.DiscountType,
+			DiscountValue:      item.DiscountValue,
+			DiscountAmount:     item.DiscountAmount,
+			RedeemedWithPoints: item.RedeemWithPoints,
 		}
 		if orderItem.UnitType == "" {
 			orderItem.UnitType = "individual"
@@ -206,6 +261,7 @@ func (s *OrderService) Create(req dto.CreateOrderRequest, userID string) (*dto.O
 			Quantity:   stockDelta,
 			UnitType:   item.UnitType,
 			UnitPrice:  item.UnitPrice,
+			Reason:     "sale",
 			Note:       "Sale (Order #" + order.ID + ")",
 			CreatedBy:  userID,
 			CreatedAt:  time.Now(),
@@ -215,10 +271,28 @@ func (s *OrderService) Create(req dto.CreateOrderRequest, userID string) (*dto.O
 		}
 	}
 
+	// Override order.Total dengan cash actual (tidak include item yang
+	// ditebus pakai poin). Cara ini bikin Reports revenue match dengan
+	// cash di laci, dan order_items tetap simpan unit_price asli + flag
+	// redeem untuk audit "siapa beli apa kapan".
+	order.Total = cashSubtotal
+
 	if err := tx.Create(order).Error; err != nil {
 		tx.Rollback()
 		s.Log.Error().Err(err).Msg("Failed to create order")
 		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to create order"}
+	}
+
+	// Member points: redeem dulu (kurangi saldo + log), lalu earn (tambah
+	// saldo + log). Earn dihitung dari cashSubtotal — strict kelipatan 100k.
+	// Loop in/out poin tidak ada karena item yang ditebus tidak masuk
+	// cashSubtotal (sudah dipisah di awal).
+	pointsEarned := calculateEarnedPoints(cashSubtotal)
+	if req.MemberID != nil && *req.MemberID != "" && (pointsToRedeem > 0 || pointsEarned > 0) {
+		if apiErr := s.applyPointsChange(tx, *req.MemberID, order.ID, userID, pointsToRedeem, pointsEarned); apiErr != nil {
+			tx.Rollback()
+			return nil, apiErr
+		}
 	}
 
 	tx.Commit()
@@ -241,6 +315,66 @@ func (s *OrderService) Create(req dto.CreateOrderRequest, userID string) (*dto.O
 
 	resp := s.toResponse(order)
 	return &resp, nil
+}
+
+// applyPointsChange does the member.points mutation + audit-trail inserts
+// inside the supplied tx. Caller rolls back on error. Redeem first (so
+// negative balance impossible), then earn. Either may be 0.
+func (s *OrderService) applyPointsChange(tx *gorm.DB, memberID, orderID, userID string, redeem, earn int) *dto.ApiError {
+	if redeem < 0 || earn < 0 {
+		return &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Internal: negative points operation"}
+	}
+	// SELECT FOR UPDATE: lock member row for duration of tx supaya dua
+	// concurrent checkout untuk member yang sama tidak race ke balance
+	// negatif. MySQL InnoDB default REPEATABLE READ + row lock.
+	var member entity.Member
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", memberID).First(&member).Error; err != nil {
+		return &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Member tidak ditemukan saat update poin"}
+	}
+	balance := member.Points
+	if redeem > 0 {
+		if balance < redeem {
+			return &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Saldo poin tidak cukup (race)"}
+		}
+		balance -= redeem
+		ord := orderID
+		uid := userID
+		if err := tx.Create(&entity.MemberPointMovement{
+			ID:           uuid.New().String(),
+			MemberID:     memberID,
+			OrderID:      &ord,
+			Type:         "redeem-item",
+			Points:       -redeem,
+			BalanceAfter: balance,
+			Note:         "Tebus barang di order",
+			CreatedBy:    &uid,
+			CreatedAt:    time.Now(),
+		}).Error; err != nil {
+			return &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to log redeem"}
+		}
+	}
+	if earn > 0 {
+		balance += earn
+		ord := orderID
+		uid := userID
+		if err := tx.Create(&entity.MemberPointMovement{
+			ID:           uuid.New().String(),
+			MemberID:     memberID,
+			OrderID:      &ord,
+			Type:         "earn",
+			Points:       earn,
+			BalanceAfter: balance,
+			Note:         "Belanja kelipatan Rp 100.000",
+			CreatedBy:    &uid,
+			CreatedAt:    time.Now(),
+		}).Error; err != nil {
+			return &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to log earn"}
+		}
+	}
+	if err := tx.Model(&entity.Member{}).Where("id = ?", memberID).Update("points", balance).Error; err != nil {
+		return &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to update member points"}
+	}
+	return nil
 }
 
 // ResendReceiptWA resends the WhatsApp receipt for an existing order.
@@ -734,6 +868,32 @@ func (s *OrderService) CreatePending(req dto.CreatePendingOrderRequest, userID s
 		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Nomor HP customer wajib diisi untuk pesanan pending"}
 	}
 
+	// Hitung cash subtotal + validasi saldo poin kalau ada redeem.
+	// Pending order tidak decrement saldo poin SEKARANG — itu di MarkAsPaid.
+	// Validasi di sini hanya guard supaya tidak buat invoice yang nanti gagal.
+	var pointsToRedeem int
+	var cashSubtotal float64
+	for _, item := range req.Items {
+		lineTotal := item.UnitPrice * float64(item.Quantity)
+		if item.RedeemWithPoints {
+			pointsToRedeem += int(lineTotal)
+		} else {
+			cashSubtotal += lineTotal
+		}
+	}
+	if pointsToRedeem > 0 {
+		if req.MemberID == nil || *req.MemberID == "" {
+			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Tebus barang dengan poin perlu pilih member"}
+		}
+		member, err := s.MemberRepo.FindByID(*req.MemberID)
+		if err != nil {
+			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Member tidak ditemukan"}
+		}
+		if member.Points < pointsToRedeem {
+			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: fmt.Sprintf("Saldo poin tidak cukup: butuh %d, tersedia %d", pointsToRedeem, member.Points)}
+		}
+	}
+
 	tx := s.DB.Begin()
 
 	order := &entity.Order{
@@ -741,7 +901,7 @@ func (s *OrderService) CreatePending(req dto.CreatePendingOrderRequest, userID s
 		Subtotal:           req.Subtotal,
 		PPNRate:            req.PPNRate,
 		PPN:                req.PPN,
-		Total:              req.Total,
+		Total:              cashSubtotal,
 		Payment:            "cash", // placeholder; real method set at MarkAsPaid
 		Status:             "pending",
 		Customer:           req.Customer,
@@ -755,18 +915,19 @@ func (s *OrderService) CreatePending(req dto.CreatePendingOrderRequest, userID s
 
 	for _, item := range req.Items {
 		orderItem := entity.OrderItem{
-			ID:             uuid.New().String(),
-			OrderID:        order.ID,
-			ProductID:      item.ProductID,
-			Name:           item.Name,
-			Quantity:       item.Quantity,
-			UnitType:       item.UnitType,
-			UnitPrice:      item.UnitPrice,
-			PurchasePrice:  item.PurchasePrice,
-			RegularPrice:   item.RegularPrice,
-			DiscountType:   item.DiscountType,
-			DiscountValue:  item.DiscountValue,
-			DiscountAmount: item.DiscountAmount,
+			ID:                 uuid.New().String(),
+			OrderID:            order.ID,
+			ProductID:          item.ProductID,
+			Name:               item.Name,
+			Quantity:           item.Quantity,
+			UnitType:           item.UnitType,
+			UnitPrice:          item.UnitPrice,
+			PurchasePrice:      item.PurchasePrice,
+			RegularPrice:       item.RegularPrice,
+			DiscountType:       item.DiscountType,
+			DiscountValue:      item.DiscountValue,
+			DiscountAmount:     item.DiscountAmount,
+			RedeemedWithPoints: item.RedeemWithPoints,
 		}
 		if orderItem.UnitType == "" {
 			orderItem.UnitType = "individual"
@@ -866,6 +1027,7 @@ func (s *OrderService) MarkAsPaid(orderID string, req dto.MarkAsPaidRequest, use
 			Quantity:  stockDelta,
 			UnitType:  item.UnitType,
 			UnitPrice: item.UnitPrice,
+			Reason:    "sale",
 			Note:      "Sale (Pending Order #" + order.ID + " marked paid)",
 			CreatedBy: userID,
 			CreatedAt: time.Now(),
@@ -895,6 +1057,29 @@ func (s *OrderService) MarkAsPaid(orderID string, req dto.MarkAsPaidRequest, use
 		tx.Rollback()
 		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to update order"}
 	}
+
+	// Member points: apply redeem (item flagged redeemed_with_points sudah
+	// di-set saat CreatePending) + earn dari cash actual yang kelipatan 100k.
+	// Pending order tidak decrement saldo saat created — efektif berlaku di
+	// MarkAsPaid ini supaya consistent dengan stock decrement timing.
+	var pointsToRedeem int
+	var cashSubtotal float64
+	for _, it := range order.Items {
+		lineTotal := it.UnitPrice * float64(it.Quantity)
+		if it.RedeemedWithPoints {
+			pointsToRedeem += int(lineTotal)
+		} else {
+			cashSubtotal += lineTotal
+		}
+	}
+	pointsEarned := calculateEarnedPoints(cashSubtotal)
+	if order.MemberID != nil && *order.MemberID != "" && (pointsToRedeem > 0 || pointsEarned > 0) {
+		if apiErr := s.applyPointsChange(tx, *order.MemberID, order.ID, userID, pointsToRedeem, pointsEarned); apiErr != nil {
+			tx.Rollback()
+			return nil, apiErr
+		}
+	}
+
 	tx.Commit()
 
 	reloaded, _ := s.Repo.FindByID(order.ID)
@@ -1032,26 +1217,42 @@ func (s *OrderService) toResponse(o *entity.Order) dto.OrderResponse {
 	}
 
 	var savings float64
+	var pointsUsed int
 	for _, item := range o.Items {
 		if item.RegularPrice != nil && *item.RegularPrice > item.UnitPrice {
 			savings += (*item.RegularPrice - item.UnitPrice) * float64(item.Quantity)
 		}
+		if item.RedeemedWithPoints {
+			pointsUsed += int(item.UnitPrice * float64(item.Quantity))
+		}
 		resp.Items = append(resp.Items, dto.OrderItemResponse{
-			ID:             item.ID,
-			ProductID:      item.ProductID,
-			Name:           item.Name,
-			Quantity:       item.Quantity,
-			UnitType:       item.UnitType,
-			UnitPrice:      item.UnitPrice,
-			PurchasePrice:  item.PurchasePrice,
-			RegularPrice:   item.RegularPrice,
-			DiscountType:   item.DiscountType,
-			DiscountValue:  item.DiscountValue,
-			DiscountAmount: item.DiscountAmount,
+			ID:                 item.ID,
+			ProductID:          item.ProductID,
+			Name:               item.Name,
+			Quantity:           item.Quantity,
+			UnitType:           item.UnitType,
+			UnitPrice:          item.UnitPrice,
+			PurchasePrice:      item.PurchasePrice,
+			RegularPrice:       item.RegularPrice,
+			DiscountType:       item.DiscountType,
+			DiscountValue:      item.DiscountValue,
+			DiscountAmount:     item.DiscountAmount,
+			RedeemedWithPoints: item.RedeemedWithPoints,
 		})
 	}
 	if o.MemberID != nil && savings > 0 {
 		resp.MemberSavings = savings
+	}
+	resp.PointsUsed = pointsUsed
+	// PointsEarned = lookup movement type=earn linked to this order. Best-
+	// effort: query failure leaves it 0 — display-only field.
+	if o.MemberID != nil {
+		var earned struct{ Points int }
+		s.DB.Model(&entity.MemberPointMovement{}).
+			Select("COALESCE(SUM(points), 0) as points").
+			Where("order_id = ? AND type = 'earn'", o.ID).
+			Scan(&earned)
+		resp.PointsEarned = earned.Points
 	}
 	for _, p := range o.Payments {
 		resp.Payments = append(resp.Payments, dto.OrderPaymentResponse{

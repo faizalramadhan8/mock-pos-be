@@ -61,3 +61,19 @@ func (r *MemberRepository) Update(member *entity.Member) error {
 func (r *MemberRepository) Delete(id string) error {
 	return r.DB.Delete(&entity.Member{}, "id = ?", id).Error
 }
+
+// UpdatePointsTx sets member.points to newBalance using the supplied tx.
+// Caller logs an audit MemberPointMovement row in the same tx.
+func (r *MemberRepository) UpdatePointsTx(tx *gorm.DB, id string, newBalance int) error {
+	return tx.Model(&entity.Member{}).Where("id = ?", id).Update("points", newBalance).Error
+}
+
+// FindAllWithPositivePoints returns members whose balance > 0. Used by the
+// Jan 1 expire cron to enumerate who needs an audit movement.
+func (r *MemberRepository) FindAllWithPositivePoints() ([]entity.Member, error) {
+	var members []entity.Member
+	if err := r.DB.Where("points > 0").Find(&members).Error; err != nil {
+		return nil, err
+	}
+	return members, nil
+}

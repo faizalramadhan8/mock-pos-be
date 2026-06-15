@@ -37,6 +37,10 @@ type Product struct {
 	Image         string         `gorm:"type:text;null" json:"image,omitempty"`
 	MinStock      int            `gorm:"type:int;not null;default:0" json:"min_stock"`
 	IsActive      bool           `gorm:"type:tinyint(1);not null;default:1" json:"is_active"`
+	// IsRedeemable: TRUE = produk masuk katalog tebus poin. Admin tandai
+	// via halaman "Katalog Tebus Poin" di Stok. Default FALSE — semua
+	// produk existing tidak eligible sampai di-curate.
+	IsRedeemable  bool           `gorm:"column:is_redeemable;type:tinyint(1);not null;default:0" json:"is_redeemable"`
 	CreatedAt     time.Time      `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
 	UpdatedAt     time.Time      `gorm:"default:current_timestamp()" json:"updated_at,omitempty"`
 	DeletedAt     gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`

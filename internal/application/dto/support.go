@@ -20,7 +20,20 @@ type MemberResponse struct {
 	Phone        string `json:"phone"`
 	Address      string `json:"address,omitempty"`
 	MemberNumber string `json:"member_number,omitempty"`
+	Points       int    `json:"points"`
 	CreatedAt    string `json:"created_at"`
+}
+
+// MemberPointMovementResponse - 1 row riwayat poin per member.
+type MemberPointMovementResponse struct {
+	ID           string  `json:"id"`
+	OrderID      *string `json:"order_id,omitempty"`
+	Type         string  `json:"type"`           // 'earn' | 'redeem-item' | 'expire-reset' | 'adjust'
+	Points       int     `json:"points"`         // signed
+	BalanceAfter int     `json:"balance_after"`
+	Note         string  `json:"note,omitempty"`
+	CreatedBy    *string `json:"created_by,omitempty"`
+	CreatedAt    string  `json:"created_at"`
 }
 
 type MemberStatsRequest struct {

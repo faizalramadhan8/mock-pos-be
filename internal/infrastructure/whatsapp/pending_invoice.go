@@ -55,17 +55,25 @@ func FormatPendingInvoice(order *entity.Order, storeName, storeAddress, storePho
 	}
 	b.WriteString("─────────────────\n")
 
-	// Items: 2-line per item, sama dengan FormatReceipt.
+	// Items: 2-line per item, sama dengan FormatReceipt. Item yang ditebus
+	// pakai poin di-tag "🎁" dan tidak masuk gross subtotal (consistent dengan
+	// receipt.go).
 	var memberSavings, gross float64
+	var pointsUsed int
 	for _, item := range order.Items {
+		lineTotal := item.UnitPrice * float64(item.Quantity)
+		if item.RedeemedWithPoints {
+			pointsUsed += int(lineTotal)
+			fmt.Fprintf(&b, "🎁 %s ×%d\n", item.Name, item.Quantity)
+			fmt.Fprintf(&b, "   −%s poin\n", thousand(int64(lineTotal)))
+			continue
+		}
 		regular := item.UnitPrice
 		if item.RegularPrice != nil && *item.RegularPrice > item.UnitPrice {
 			regular = *item.RegularPrice
 			memberSavings += (regular - item.UnitPrice) * float64(item.Quantity)
 		}
 		gross += regular * float64(item.Quantity)
-
-		lineTotal := item.UnitPrice * float64(item.Quantity)
 		fmt.Fprintf(&b, "%s ×%d\n", item.Name, item.Quantity)
 		fmt.Fprintf(&b, "   %s\n", rp(lineTotal))
 	}
@@ -74,6 +82,9 @@ func FormatPendingInvoice(order *entity.Order, storeName, storeAddress, storePho
 	fmt.Fprintf(&b, "Subtotal: %s\n", rp(gross))
 	if memberSavings > 0 {
 		fmt.Fprintf(&b, "Hemat Member: -%s\n", rp(memberSavings))
+	}
+	if pointsUsed > 0 {
+		fmt.Fprintf(&b, "Poin Dipakai: -%s poin\n", thousand(int64(pointsUsed)))
 	}
 	fmt.Fprintf(&b, "*Total: %s*\n", rp(order.Total))
 	b.WriteString("─────────────────\n")

@@ -165,3 +165,20 @@ func (ctrl *ProductController) ToggleActive(c *fiber.Ctx) error {
 	}
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "successfully", Body: resp})
 }
+
+// SetRedeemable PATCH /products/:id/redeemable
+// Body: {"is_redeemable": true|false}
+func (ctrl *ProductController) SetRedeemable(c *fiber.Ctx) error {
+	id := c.Params("id")
+	var req struct {
+		IsRedeemable bool `json:"is_redeemable"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(dto.ApiResponse{Code: fiber.ErrUnprocessableEntity.Code, Message: fiber.ErrUnprocessableEntity.Message, Error: err.Error()})
+	}
+	resp, fail := ctrl.Service.SetRedeemable(id, req.IsRedeemable)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "successfully", Body: resp})
+}

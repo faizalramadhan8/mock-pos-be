@@ -15,12 +15,34 @@ type Member struct {
 	// strings are not. The kasir "Tambah Member" form does not require a
 	// number, so most members hit this path.
 	MemberNumber *string        `gorm:"column:member_number;type:varchar(50);null;uniqueIndex" json:"member_number,omitempty"`
+	// Points: loyalty balance. Earn = (cash_total / 100_000) * 1000 kalau
+	// cash_total tepat kelipatan 100k. Redeem = per-item "tebus" di cart.
+	// Reset 0 setiap 1 Januari (cron).
+	Points       int            `gorm:"type:int;not null;default:0" json:"points"`
 	CreatedAt    time.Time      `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
 	UpdatedAt    time.Time      `gorm:"default:current_timestamp()" json:"updated_at,omitempty"`
 	DeletedAt    gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
 }
 
 func (Member) TableName() string { return "members" }
+
+// MemberPointMovement = append-only audit trail untuk semua perubahan
+// member.points. Type: 'earn' (dapat dari belanja kelipatan 100k),
+// 'redeem-item' (tebus barang per-row di cart), 'expire-reset' (auto-reset
+// 1 Januari), 'adjust' (manual oleh admin). Points signed: + earn, - redeem.
+type MemberPointMovement struct {
+	ID           string    `gorm:"type:varchar(36);primary_key;not null" json:"id"`
+	MemberID     string    `gorm:"column:member_id;type:varchar(36);not null;index" json:"member_id"`
+	OrderID      *string   `gorm:"column:order_id;type:varchar(36);null" json:"order_id,omitempty"`
+	Type         string    `gorm:"type:varchar(20);not null" json:"type"`
+	Points       int       `gorm:"type:int;not null" json:"points"`
+	BalanceAfter int       `gorm:"column:balance_after;type:int;not null" json:"balance_after"`
+	Note         string    `gorm:"type:text;null" json:"note,omitempty"`
+	CreatedBy    *string   `gorm:"column:created_by;type:varchar(36);null" json:"created_by,omitempty"`
+	CreatedAt    time.Time `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
+}
+
+func (MemberPointMovement) TableName() string { return "member_point_movements" }
 
 type CashSession struct {
 	ID           string     `gorm:"type:varchar(36);primary_key;not null" json:"id"`

@@ -57,6 +57,7 @@ type ProductResponse struct {
 	Image         string            `json:"image,omitempty"`
 	MinStock      int               `json:"min_stock"`
 	IsActive      bool              `json:"is_active"`
+	IsRedeemable  bool              `json:"is_redeemable"`
 	CreatedAt     string            `json:"created_at"`
 }
 

@@ -350,6 +350,24 @@ func (s *ProductService) ToggleActive(id string) (*dto.ProductResponse, *dto.Api
 	return &resp, nil
 }
 
+// SetRedeemable explicitly sets the is_redeemable flag. Used by the
+// "Katalog Tebus Poin" page where admin add/remove products from the
+// catalog. Body uses explicit value (not toggle) so the action is
+// idempotent — re-clicking "Tambah" tidak flip ke off.
+func (s *ProductService) SetRedeemable(id string, redeemable bool) (*dto.ProductResponse, *dto.ApiError) {
+	product, err := s.Repo.FindByID(id)
+	if err != nil {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Product not found"}
+	}
+	product.IsRedeemable = redeemable
+	if err := s.Repo.Update(product); err != nil {
+		s.Log.Error().Err(err).Msg("Failed to update is_redeemable")
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to update product"}
+	}
+	resp := s.toResponse(product)
+	return &resp, nil
+}
+
 // GetPriceHistory returns chronological price changes for a product. Optional
 // priceType filter — empty = all (regular + member + purchase).
 func (s *ProductService) GetPriceHistory(productID, priceType string) ([]dto.ProductPriceHistoryResponse, *dto.ApiError) {
@@ -420,6 +438,7 @@ func (s *ProductService) toResponse(p *entity.Product) dto.ProductResponse {
 		Image:         p.Image,
 		MinStock:      p.MinStock,
 		IsActive:      p.IsActive,
+		IsRedeemable:  p.IsRedeemable,
 		CreatedAt:     p.CreatedAt.Format(time.RFC3339),
 	}
 	if p.Category != nil {

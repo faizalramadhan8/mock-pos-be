@@ -44,7 +44,11 @@ type OrderItem struct {
 	DiscountType   string    `gorm:"type:varchar(20);null" json:"discount_type,omitempty"`
 	DiscountValue  float64   `gorm:"type:decimal(15,2);null;default:0" json:"discount_value"`
 	DiscountAmount float64   `gorm:"type:decimal(15,2);null;default:0" json:"discount_amount"`
-	CreatedAt      time.Time `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
+	// RedeemedWithPoints: true kalau item ini dibayar pakai member.points
+	// (tebus barang). Harga item tidak masuk hitungan cash actual untuk
+	// earn poin baru — cegah loop (tebus pakai poin lalu dapat poin lagi).
+	RedeemedWithPoints bool      `gorm:"column:redeemed_with_points;type:tinyint(1);not null;default:0" json:"redeemed_with_points"`
+	CreatedAt          time.Time `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
 }
 
 func (OrderItem) TableName() string { return "order_items" }

@@ -114,3 +114,15 @@ func (ctrl *MemberController) Delete(c *fiber.Ctx) error {
 	}
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Member deleted successfully"})
 }
+
+// GetPointMovements returns riwayat poin per member. Default limit 100,
+// override via ?limit query.
+func (ctrl *MemberController) GetPointMovements(c *fiber.Ctx) error {
+	id := c.Params("id")
+	limit, _ := strconv.Atoi(c.Query("limit", "100"))
+	rows, fail := ctrl.Service.GetPointMovements(id, limit)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "successfully", Body: rows})
+}
