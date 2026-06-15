@@ -38,6 +38,35 @@ type AdjustStockRequest struct {
 	Delta int `json:"delta" validate:"required"`
 }
 
+// ProductPriceTierMemberRef — slim reference to a member in tier response.
+// Only id+name+phone shown; full member detail tidak relevan untuk tier.
+type ProductPriceTierMemberRef struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Phone string `json:"phone"`
+}
+
+type ProductPriceTierResponse struct {
+	ID         string                      `json:"id"`
+	ProductID  string                      `json:"product_id"`
+	MinQty     int                         `json:"min_qty"`
+	Price      float64                     `json:"price"`
+	TargetType string                      `json:"target_type"`        // 'all_members' | 'member_specific'
+	Note       string                      `json:"note,omitempty"`
+	Members    []ProductPriceTierMemberRef `json:"members,omitempty"` // populated when target_type='member_specific'
+	CreatedAt  string                      `json:"created_at"`
+}
+
+// SavePriceTierRequest digunakan untuk Create + Update tier (same body).
+// MemberIDs hanya wajib kalau TargetType='member_specific'.
+type SavePriceTierRequest struct {
+	MinQty     int      `json:"min_qty" validate:"required,min=1"`
+	Price      float64  `json:"price" validate:"required,min=0"`
+	TargetType string   `json:"target_type" validate:"required,oneof=all_members member_specific"`
+	MemberIDs  []string `json:"member_ids,omitempty"`
+	Note       string   `json:"note"`
+}
+
 type ProductResponse struct {
 	ID            string            `json:"id"`
 	SKU           string            `json:"sku"`
@@ -58,6 +87,7 @@ type ProductResponse struct {
 	MinStock      int               `json:"min_stock"`
 	IsActive      bool              `json:"is_active"`
 	IsRedeemable  bool              `json:"is_redeemable"`
+	PriceTiers    []ProductPriceTierResponse `json:"price_tiers,omitempty"`
 	CreatedAt     string            `json:"created_at"`
 }
 

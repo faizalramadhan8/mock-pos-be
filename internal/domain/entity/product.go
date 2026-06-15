@@ -48,6 +48,30 @@ type Product struct {
 
 func (Product) TableName() string { return "products" }
 
+// ProductPriceTier — tiered pricing untuk member. Admin set "beli ≥ min_qty
+// satuan dapat harga X" yang berlaku khusus member (umum atau spesifik).
+// Walk-in customer non-member selalu pakai selling_price normal.
+//
+// min_qty SELALU dalam satuan. Kalau cart unit_type=box, BE/FE convert dulu
+// (qty × qty_per_box) sebelum compare. price = harga per satuan juga (bukan
+// per dus) — konsisten dengan member_price/selling_price baseline.
+type ProductPriceTier struct {
+	ID         string    `gorm:"type:varchar(36);primary_key;not null" json:"id"`
+	ProductID  string    `gorm:"column:product_id;type:varchar(36);not null" json:"product_id"`
+	MinQty     int       `gorm:"column:min_qty;type:int;not null" json:"min_qty"`
+	Price      float64   `gorm:"type:decimal(15,2);not null" json:"price"`
+	TargetType string    `gorm:"column:target_type;type:varchar(20);not null" json:"target_type"` // 'all_members' | 'member_specific'
+	Note       string    `gorm:"type:varchar(200);null" json:"note,omitempty"`
+	CreatedAt  time.Time `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
+	UpdatedAt  time.Time `gorm:"default:current_timestamp()" json:"updated_at,omitempty"`
+
+	// Members: kalau target_type='member_specific', list whitelist member.
+	// Preloaded via gorm many2many. Empty untuk target_type='all_members'.
+	Members []Member `gorm:"many2many:product_price_tier_members;foreignKey:ID;joinForeignKey:tier_id;References:ID;joinReferences:member_id" json:"members,omitempty"`
+}
+
+func (ProductPriceTier) TableName() string { return "product_price_tiers" }
+
 type Supplier struct {
 	ID        string         `gorm:"type:varchar(36);primary_key;not null" json:"id"`
 	Name      string         `gorm:"type:varchar(200);not null" json:"name"`

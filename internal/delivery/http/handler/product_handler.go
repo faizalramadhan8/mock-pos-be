@@ -166,6 +166,59 @@ func (ctrl *ProductController) ToggleActive(c *fiber.Ctx) error {
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "successfully", Body: resp})
 }
 
+// ListPriceTiers GET /products/:id/tiers
+func (ctrl *ProductController) ListPriceTiers(c *fiber.Ctx) error {
+	id := c.Params("id")
+	tiers, fail := ctrl.Service.ListPriceTiers(id)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "successfully", Body: tiers})
+}
+
+// CreatePriceTier POST /products/:id/tiers
+func (ctrl *ProductController) CreatePriceTier(c *fiber.Ctx) error {
+	id := c.Params("id")
+	var req dto.SavePriceTierRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(dto.ApiResponse{Code: fiber.ErrUnprocessableEntity.Code, Message: fiber.ErrUnprocessableEntity.Message, Error: err.Error()})
+	}
+	if err := util.ValidateRequest(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{Code: fiber.ErrBadRequest.Code, Message: fiber.ErrBadRequest.Message, Error: err})
+	}
+	resp, fail := ctrl.Service.CreatePriceTier(id, req)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
+	}
+	return c.Status(fiber.StatusCreated).JSON(dto.ApiResponse{Code: fiber.StatusCreated, Message: "successfully", Body: resp})
+}
+
+// UpdatePriceTier PUT /products/:id/tiers/:tierId
+func (ctrl *ProductController) UpdatePriceTier(c *fiber.Ctx) error {
+	tierID := c.Params("tierId")
+	var req dto.SavePriceTierRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(dto.ApiResponse{Code: fiber.ErrUnprocessableEntity.Code, Message: fiber.ErrUnprocessableEntity.Message, Error: err.Error()})
+	}
+	if err := util.ValidateRequest(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{Code: fiber.ErrBadRequest.Code, Message: fiber.ErrBadRequest.Message, Error: err})
+	}
+	resp, fail := ctrl.Service.UpdatePriceTier(tierID, req)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "successfully", Body: resp})
+}
+
+// DeletePriceTier DELETE /products/:id/tiers/:tierId
+func (ctrl *ProductController) DeletePriceTier(c *fiber.Ctx) error {
+	tierID := c.Params("tierId")
+	if fail := ctrl.Service.DeletePriceTier(tierID); fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Tier deleted"})
+}
+
 // SetRedeemable PATCH /products/:id/redeemable
 // Body: {"is_redeemable": true|false}
 func (ctrl *ProductController) SetRedeemable(c *fiber.Ctx) error {

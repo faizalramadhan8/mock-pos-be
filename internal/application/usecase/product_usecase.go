@@ -20,6 +20,8 @@ type ProductService struct {
 	DB          *gorm.DB
 	Repo        *repository.ProductRepository
 	HistoryRepo *repository.ProductPriceHistoryRepository
+	TierRepo    *repository.ProductPriceTierRepository
+	MemberRepo  *repository.MemberRepository
 }
 
 func NewProductService(ctx context.Context, db *gorm.DB) *ProductService {
@@ -29,6 +31,8 @@ func NewProductService(ctx context.Context, db *gorm.DB) *ProductService {
 		DB:          db,
 		Repo:        repository.NewProductRepository(ctx, db),
 		HistoryRepo: repository.NewProductPriceHistoryRepository(ctx, db),
+		TierRepo:    repository.NewProductPriceTierRepository(ctx, db),
+		MemberRepo:  repository.NewMemberRepository(ctx, db),
 	}
 }
 
@@ -462,5 +466,136 @@ func (s *ProductService) toResponse(p *entity.Product) dto.ProductResponse {
 		}
 		resp.Supplier = &sup
 	}
+	// PriceTiers: best-effort fetch — kalau gagal, biarkan kosong, tidak
+	// block response. Tier-aware pricing tetap punya fallback ke selling
+	// price kalau tidak ada tier.
+	tiers, err := s.TierRepo.FindByProduct(p.ID)
+	if err == nil && len(tiers) > 0 {
+		resp.PriceTiers = make([]dto.ProductPriceTierResponse, 0, len(tiers))
+		for _, t := range tiers {
+			resp.PriceTiers = append(resp.PriceTiers, tierToResponse(&t))
+		}
+	}
 	return resp
+}
+
+func tierToResponse(t *entity.ProductPriceTier) dto.ProductPriceTierResponse {
+	out := dto.ProductPriceTierResponse{
+		ID:         t.ID,
+		ProductID:  t.ProductID,
+		MinQty:     t.MinQty,
+		Price:      t.Price,
+		TargetType: t.TargetType,
+		Note:       t.Note,
+		CreatedAt:  t.CreatedAt.Format(time.RFC3339),
+	}
+	if len(t.Members) > 0 {
+		out.Members = make([]dto.ProductPriceTierMemberRef, 0, len(t.Members))
+		for _, m := range t.Members {
+			out.Members = append(out.Members, dto.ProductPriceTierMemberRef{
+				ID:    m.ID,
+				Name:  m.Name,
+				Phone: m.Phone,
+			})
+		}
+	}
+	return out
+}
+
+// ─── Price-tier CRUD ────────────────────────────────────────────────────
+
+func (s *ProductService) ListPriceTiers(productID string) ([]dto.ProductPriceTierResponse, *dto.ApiError) {
+	if _, err := s.Repo.FindByID(productID); err != nil {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Product not found"}
+	}
+	tiers, err := s.TierRepo.FindByProduct(productID)
+	if err != nil {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to fetch tiers"}
+	}
+	out := make([]dto.ProductPriceTierResponse, 0, len(tiers))
+	for _, t := range tiers {
+		out = append(out, tierToResponse(&t))
+	}
+	return out, nil
+}
+
+func (s *ProductService) buildTierFromRequest(productID string, req dto.SavePriceTierRequest) (*entity.ProductPriceTier, *dto.ApiError) {
+	tier := &entity.ProductPriceTier{
+		ProductID:  productID,
+		MinQty:     req.MinQty,
+		Price:      req.Price,
+		TargetType: req.TargetType,
+		Note:       req.Note,
+	}
+	if req.TargetType == "member_specific" {
+		if len(req.MemberIDs) == 0 {
+			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Tier 'member_specific' wajib pilih minimal 1 member"}
+		}
+		// Hydrate Members slice so GORM many2many insert works on Create.
+		members := make([]entity.Member, 0, len(req.MemberIDs))
+		for _, id := range req.MemberIDs {
+			m, err := s.MemberRepo.FindByID(id)
+			if err != nil {
+				return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Member tidak ditemukan: " + id}
+			}
+			members = append(members, *m)
+		}
+		tier.Members = members
+	}
+	return tier, nil
+}
+
+func (s *ProductService) CreatePriceTier(productID string, req dto.SavePriceTierRequest) (*dto.ProductPriceTierResponse, *dto.ApiError) {
+	if _, err := s.Repo.FindByID(productID); err != nil {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Product not found"}
+	}
+	tier, apiErr := s.buildTierFromRequest(productID, req)
+	if apiErr != nil {
+		return nil, apiErr
+	}
+	tier.ID = uuid.New().String()
+	if err := s.TierRepo.Create(tier); err != nil {
+		s.Log.Error().Err(err).Msg("Failed to create tier")
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to create tier"}
+	}
+	// Refetch to get joined members with full names.
+	created, _ := s.TierRepo.FindByID(tier.ID)
+	if created != nil {
+		tier = created
+	}
+	resp := tierToResponse(tier)
+	return &resp, nil
+}
+
+func (s *ProductService) UpdatePriceTier(tierID string, req dto.SavePriceTierRequest) (*dto.ProductPriceTierResponse, *dto.ApiError) {
+	existing, err := s.TierRepo.FindByID(tierID)
+	if err != nil {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Tier not found"}
+	}
+	updated, apiErr := s.buildTierFromRequest(existing.ProductID, req)
+	if apiErr != nil {
+		return nil, apiErr
+	}
+	updated.ID = tierID
+	if err := s.TierRepo.Update(updated); err != nil {
+		s.Log.Error().Err(err).Msg("Failed to update tier")
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to update tier"}
+	}
+	refreshed, _ := s.TierRepo.FindByID(tierID)
+	if refreshed != nil {
+		updated = refreshed
+	}
+	resp := tierToResponse(updated)
+	return &resp, nil
+}
+
+func (s *ProductService) DeletePriceTier(tierID string) *dto.ApiError {
+	if _, err := s.TierRepo.FindByID(tierID); err != nil {
+		return &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Tier not found"}
+	}
+	if err := s.TierRepo.Delete(tierID); err != nil {
+		s.Log.Error().Err(err).Msg("Failed to delete tier")
+		return &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to delete tier"}
+	}
+	return nil
 }

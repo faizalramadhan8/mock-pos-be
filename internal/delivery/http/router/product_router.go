@@ -27,6 +27,12 @@ func UseProductRouter(ctx context.Context, r fiber.Router) {
 	products.Patch("/:id/stock", auth.AllowInventoryWrite(), ctrl.AdjustStock)
 	products.Patch("/:id/toggle-active", auth.AllowAdmins(), ctrl.ToggleActive)
 	products.Patch("/:id/redeemable", auth.AllowAdmins(), ctrl.SetRedeemable)
+	// Price tier CRUD — admin only. Walk-in customer tidak terdampak;
+	// tier hanya berlaku saat ada member aktif di cart.
+	products.Get("/:id/tiers", ctrl.ListPriceTiers)
+	products.Post("/:id/tiers", auth.AllowAdmins(), ctrl.CreatePriceTier)
+	products.Put("/:id/tiers/:tierId", auth.AllowAdmins(), ctrl.UpdatePriceTier)
+	products.Delete("/:id/tiers/:tierId", auth.AllowAdmins(), ctrl.DeletePriceTier)
 	products.Delete("/:id", auth.AllowAdmins(), ctrl.Delete)
 }
 
