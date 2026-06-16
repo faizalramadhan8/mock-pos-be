@@ -14,7 +14,9 @@ import (
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
 	"github.com/faizalramadhan/pos-be/internal/domain/repository"
 	"github.com/faizalramadhan/pos-be/internal/infrastructure/config"
+	"github.com/faizalramadhan/pos-be/internal/infrastructure/database"
 	"github.com/faizalramadhan/pos-be/internal/infrastructure/whatsapp"
+	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -36,6 +38,7 @@ type OrderService struct {
 	AuthRepo     *repository.AuthRepository
 	MemberRepo   *repository.MemberRepository
 	PointMoveRepo *repository.MemberPointMovementRepository
+	Redis        *redis.Client
 	WA           *whatsapp.Service
 	Configs      *config.Config
 }
@@ -44,6 +47,10 @@ func NewOrderService(ctx context.Context, db *gorm.DB) *OrderService {
 	logger := ctx.Value(enum.LoggerCtxKey).(*zerolog.Logger)
 	wa, _ := ctx.Value(enum.WhatsAppCtxKey).(*whatsapp.Service)
 	cfg, _ := ctx.Value(enum.ConfigCtxKey).(*config.Config)
+	var rdsClient *redis.Client
+	if redisInstance, ok := ctx.Value(enum.RedisCtxKey).(*database.Redis); ok && redisInstance != nil {
+		rdsClient = redisInstance.GetRedisClient(ctx)
+	}
 	return &OrderService{
 		Log:           logger,
 		DB:            db,
@@ -54,9 +61,53 @@ func NewOrderService(ctx context.Context, db *gorm.DB) *OrderService {
 		AuthRepo:      repository.NewAuthRepository(ctx, db),
 		MemberRepo:    repository.NewMemberRepository(ctx, db),
 		PointMoveRepo: repository.NewMemberPointMovementRepository(ctx, db),
+		Redis:         rdsClient,
 		WA:            wa,
 		Configs:       cfg,
 	}
+}
+
+// idempotencyTTL — order idempotency mapping kadaluarsa setelah 5 menit.
+// Enough untuk handle retry network slow / kasir double-click, tapi tidak
+// terlalu lama supaya tidak block legit re-checkout dengan items sama.
+const idempotencyTTL = 5 * time.Minute
+
+// dedupWindow — defense layer #2 untuk kasus refresh-then-resubmit. FE
+// `clientRequestIdRef` hilang saat refresh page, jadi retry gen UUID baru
+// → idempotency miss → potensi dobel. Window check ini cek: ada gak
+// recent order kasir+items+total sama? Kalau ada, kemungkinan besar dup.
+const dedupWindow = 60 * time.Second
+
+func idempotencyKey(clientReqID string) string {
+	return "idemp:order:" + clientReqID
+}
+
+// itemsSignatureFromReq builds canonical string dari cart items: sort by
+// product_id+unit_type, join dengan separator. Compare-friendly untuk dedup.
+func itemsSignatureFromReq(items []dto.CreateOrderItemRequest) string {
+	keys := make([]string, len(items))
+	for i, it := range items {
+		ut := it.UnitType
+		if ut == "" {
+			ut = "individual"
+		}
+		keys[i] = fmt.Sprintf("%s|%s|%d", it.ProductID, ut, it.Quantity)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, ";")
+}
+
+func itemsSignatureFromOrder(items []entity.OrderItem) string {
+	keys := make([]string, len(items))
+	for i, it := range items {
+		ut := it.UnitType
+		if ut == "" {
+			ut = "individual"
+		}
+		keys[i] = fmt.Sprintf("%s|%s|%d", it.ProductID, ut, it.Quantity)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, ";")
 }
 
 // Earn 1.000 poin per kelipatan Rp 100.000 di cash actual. STRICT —
@@ -114,6 +165,51 @@ func (s *OrderService) GetByID(id string) (*dto.OrderResponse, *dto.ApiError) {
 }
 
 func (s *OrderService) Create(req dto.CreateOrderRequest, userID string) (*dto.OrderResponse, *dto.ApiError) {
+	// Idempotency check #1 — kalau FE kirim client_request_id, lookup Redis
+	// dulu. Hit → return order yg sama (no double-charge). Miss → lanjut.
+	// Redis unavailable / Get error → log + bypass (jangan block transaksi).
+	if req.ClientRequestID != "" && s.Redis != nil {
+		ctx := context.Background()
+		existingOrderID, err := s.Redis.Get(ctx, idempotencyKey(req.ClientRequestID)).Result()
+		if err == nil && existingOrderID != "" {
+			existing, ferr := s.Repo.FindByID(existingOrderID)
+			if ferr == nil && existing != nil {
+				s.Log.Info().
+					Str("client_request_id", req.ClientRequestID).
+					Str("order_id", existingOrderID).
+					Msg("Idempotent retry (Redis hit) — returning existing order")
+				resp := s.toResponse(existing)
+				return &resp, nil
+			}
+		}
+	}
+
+	// Defense layer #2 — 60s window check. Handles refresh-then-resubmit
+	// dimana clientRequestIdRef di FE hilang (useRef tidak persist) sehingga
+	// retry gen UUID baru → Redis miss. Cek: ada gak order kasir+total sama
+	// dalam 60 detik dengan items signature identical? Kalau ada → kemungkinan
+	// besar dup, return existing (treat as idempotent). Insiden 16 Jun 2026:
+	// 1 QRIS bayar 1x ter-record 2 order, gap 17 menit — kalau gap < 60s
+	// akan ke-detect. Untuk gap > 60s, BE assume valid intent (customer
+	// kembali beli items sama, mis. orang lain).
+	sig := itemsSignatureFromReq(req.Items)
+	since := time.Now().Add(-dedupWindow)
+	candidates, candErr := s.Repo.FindRecentByUserAndTotal(userID, req.Total, since)
+	if candErr == nil {
+		for _, c := range candidates {
+			if itemsSignatureFromOrder(c.Items) == sig {
+				s.Log.Warn().
+					Str("client_request_id", req.ClientRequestID).
+					Str("existing_order_id", c.ID).
+					Str("kasir_id", userID).
+					Float64("total", req.Total).
+					Msg("Window dedup hit — returning existing order (likely duplicate submit)")
+				resp := s.toResponse(&c)
+				return &resp, nil
+			}
+		}
+	}
+
 	// Hitung poin yang akan ditebus per cart: sum harga item flagged
 	// redeem_with_points. Validate member ada & saldo cukup di awal,
 	// supaya tidak mid-checkout rollback besar.
@@ -296,6 +392,19 @@ func (s *OrderService) Create(req dto.CreateOrderRequest, userID string) (*dto.O
 	}
 
 	tx.Commit()
+
+	// Idempotency cache — store order.id terhadap client_request_id supaya
+	// retry dengan ID sama dapat order yang sama. SET dengan TTL 5 menit.
+	// Best-effort: kalau Redis SET gagal, log warning saja, jangan rollback
+	// (order sudah committed di DB; idempotency cuma defense layer).
+	if req.ClientRequestID != "" && s.Redis != nil {
+		if err := s.Redis.Set(context.Background(), idempotencyKey(req.ClientRequestID), order.ID, idempotencyTTL).Err(); err != nil {
+			s.Log.Warn().Err(err).
+				Str("client_request_id", req.ClientRequestID).
+				Str("order_id", order.ID).
+				Msg("Failed to cache idempotency mapping (order saved OK)")
+		}
+	}
 
 	created, _ := s.Repo.FindByID(order.ID)
 	if created != nil {

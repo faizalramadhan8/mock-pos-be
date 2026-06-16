@@ -18,6 +18,12 @@ type CreateOrderRequest struct {
 	OrderDiscountType  string                     `json:"order_discount_type"`
 	OrderDiscountValue float64                    `json:"order_discount_value"`
 	OrderDiscount      float64                    `json:"order_discount"`
+	// ClientRequestID — UUID per checkout attempt dari FE. BE simpan di
+	// Redis 5 menit. Submit ulang dengan ID sama → return order existing
+	// (idempotent). Cegah duplikat saat network slow / kasir double-click
+	// / refresh-then-resubmit. Insiden 16 Jun 2026: 1 QRIS bayar 1x, sistem
+	// catat 2 order (gap 17 menit) karena sinyal lambat + reload.
+	ClientRequestID    string                     `json:"client_request_id,omitempty"`
 }
 
 type CreateOrderPaymentRequest struct {

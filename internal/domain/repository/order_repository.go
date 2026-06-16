@@ -48,6 +48,23 @@ func (r *OrderRepository) FindByDateRange(startDate, endDate string) ([]entity.O
 	return orders, nil
 }
 
+// FindRecentByUserAndTotal returns completed orders dari kasir tertentu
+// dengan total exact match, created dalam window time terakhir. Dipakai
+// defense layer #2 dedup: kalau ada candidate yang items signature-nya
+// match → skenario refresh-then-resubmit. Limit 5 candidates untuk capping
+// query cost. Preload Items supaya caller bisa compare signature.
+func (r *OrderRepository) FindRecentByUserAndTotal(userID string, total float64, since time.Time) ([]entity.Order, error) {
+	var orders []entity.Order
+	if err := r.DB.Preload("Items").
+		Where("created_by = ? AND total = ? AND status = ? AND created_at >= ?", userID, total, "completed", since).
+		Order("created_at DESC").
+		Limit(5).
+		Find(&orders).Error; err != nil {
+		return nil, err
+	}
+	return orders, nil
+}
+
 // FindCompletedSince returns completed orders created after a given timestamp.
 // Used by the cron-based admin transaction digest (kirim ringkasan tiap 30
 // menit) supaya tidak fire WA per-checkout — cegah ban risk dari volume tinggi.
