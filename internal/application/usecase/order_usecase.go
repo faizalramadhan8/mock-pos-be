@@ -110,26 +110,26 @@ func itemsSignatureFromOrder(items []entity.OrderItem) string {
 	return strings.Join(keys, ";")
 }
 
-// Earn 1.000 poin per kelipatan Rp 100.000 di cash actual. STRICT —
-// hanya kelipatan tepat dapat poin, 150rb/199rb tidak.
+// Earn 500 poin per kelipatan Rp 100.000 di cash actual. FLOOR rule
+// (19 Jun 2026): 100rb=500, 144rb=500, 200rb=1000, 300rb=1500. Switched
+// dari STRICT × 1000 → FLOOR × 500 karena proportional reward lebih
+// intuitif untuk customer, dan rate yang lebih konservatif (500 vs 1000)
+// supaya cost-to-redeem lebih sustainable jangka panjang.
 const (
-	pointsEarnPerUnit    = 1_000
+	pointsEarnPerUnit    = 500
 	pointsEarnUnitAmount = 100_000.0
 )
 
-// calculateEarnedPoints — strict exact-multiple rule. 100rb=1000, 150rb=0,
-// 200rb=2000, 250rb=0, 300rb=3000. Cash actual = total cash setelah
-// dikurangi item yang ditebus pakai poin.
+// calculateEarnedPoints — floor rule. 100rb=500, 144rb=500, 199rb=500,
+// 200rb=1000, 250rb=1000, 300rb=1500, 400rb=2000. Cash actual = total cash
+// setelah dikurangi item yang ditebus pakai poin.
 func calculateEarnedPoints(cashActual float64) int {
 	if cashActual < pointsEarnUnitAmount {
 		return 0
 	}
-	// Bandingkan integer untuk hindari float-comparison rounding.
+	// Pakai integer cents untuk hindari floating rounding.
 	cents := int64(cashActual * 100)
 	unitCents := int64(pointsEarnUnitAmount * 100)
-	if cents%unitCents != 0 {
-		return 0
-	}
 	return int(cents/unitCents) * pointsEarnPerUnit
 }
 
