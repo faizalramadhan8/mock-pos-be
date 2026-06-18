@@ -67,3 +67,18 @@ func UseDashboardRouter(ctx context.Context, r fiber.Router) {
 	dashboard := r.Group("/dashboard", auth.AllowAll())
 	dashboard.Get("/", ctrl.Get)
 }
+
+// UseCashbookRouter — endpoint untuk Arus Kas opening balance per bulan.
+// Admin-only (laporan keuangan sensitif). FE aggregate ledger client-side
+// dari orders/expenses/invoices/refunds (sudah ada di stores) supaya tidak
+// perlu endpoint aggregate baru di BE.
+func UseCashbookRouter(ctx context.Context, r fiber.Router) {
+	configs := ctx.Value(enum.ConfigCtxKey).(*config.Config)
+	auth := middleware.NewRBACMiddleware(configs.JwtSecret, configs.JwtAccessTokenExpiresIn)
+	ctrl := handler.NewCashbookController(ctx)
+
+	cashbook := r.Group("/cashbook", auth.AllowAdmins())
+	cashbook.Get("/opening", ctrl.GetOpeningBalance)
+	cashbook.Get("/opening/all", ctrl.ListOpeningBalances)
+	cashbook.Post("/opening", ctrl.SetOpeningBalance)
+}

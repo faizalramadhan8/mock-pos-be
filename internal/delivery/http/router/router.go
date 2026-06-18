@@ -46,6 +46,9 @@ func UseRouter(ctx context.Context, r fiber.Router) {
 	// Dashboard
 	UseDashboardRouter(ctx, prefix)
 
+	// Cashbook (Arus Kas — opening balance per bulan untuk laporan cash basis)
+	UseCashbookRouter(ctx, prefix)
+
 	// Upload
 	UseUploadRouter(ctx, prefix)
 
