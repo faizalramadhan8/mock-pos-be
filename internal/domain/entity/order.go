@@ -47,8 +47,15 @@ type OrderItem struct {
 	// RedeemedWithPoints: true kalau item ini dibayar pakai member.points
 	// (tebus barang). Harga item tidak masuk hitungan cash actual untuk
 	// earn poin baru — cegah loop (tebus pakai poin lalu dapat poin lagi).
-	RedeemedWithPoints bool      `gorm:"column:redeemed_with_points;type:tinyint(1);not null;default:0" json:"redeemed_with_points"`
-	CreatedAt          time.Time `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
+	RedeemedWithPoints bool `gorm:"column:redeemed_with_points;type:tinyint(1);not null;default:0" json:"redeemed_with_points"`
+	// PriceSource: tag sumber harga saat sale time untuk audit.
+	// Values: 'regular' | 'member_price' | 'tier_all' | 'tier_member'.
+	// Default 'regular'. Lihat migration 000037.
+	PriceSource string `gorm:"column:price_source;type:varchar(20);not null;default:'regular'" json:"price_source"`
+	// TierID: nullable FK ke product_price_tiers kalau harga dari tier match.
+	// ON DELETE SET NULL — delete tier tidak hilang history order.
+	TierID    *string   `gorm:"column:tier_id;type:varchar(36);null" json:"tier_id,omitempty"`
+	CreatedAt time.Time `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
 }
 
 func (OrderItem) TableName() string { return "order_items" }

@@ -2,6 +2,8 @@ package entity
 
 import (
 	"time"
+
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -60,13 +62,13 @@ type ProductPriceTier struct {
 	ProductID  string    `gorm:"column:product_id;type:varchar(36);not null" json:"product_id"`
 	MinQty     int       `gorm:"column:min_qty;type:int;not null" json:"min_qty"`
 	Price      float64   `gorm:"type:decimal(15,2);not null" json:"price"`
-	TargetType string    `gorm:"column:target_type;type:varchar(20);not null" json:"target_type"` // 'all_members' | 'member_specific'
+	TargetType string    `gorm:"column:target_type;type:varchar(20);not null" json:"target_type"` // 'all_customers' | 'member_specific'
 	Note       string    `gorm:"type:varchar(200);null" json:"note,omitempty"`
 	CreatedAt  time.Time `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
 	UpdatedAt  time.Time `gorm:"default:current_timestamp()" json:"updated_at,omitempty"`
 
 	// Members: kalau target_type='member_specific', list whitelist member.
-	// Preloaded via gorm many2many. Empty untuk target_type='all_members'.
+	// Preloaded via gorm many2many. Empty untuk target_type='all_customers'.
 	Members []Member `gorm:"many2many:product_price_tier_members;foreignKey:ID;joinForeignKey:tier_id;References:ID;joinReferences:member_id" json:"members,omitempty"`
 }
 
@@ -105,3 +107,30 @@ type ProductPriceHistory struct {
 }
 
 func (ProductPriceHistory) TableName() string { return "product_price_history" }
+
+// ProductPriceTierHistory: audit append-only untuk CRUD product_price_tiers.
+// Mirror pattern ProductPriceHistory tapi snapshot lengkap (min_qty, price,
+// target_type, member whitelist sebagai JSON).
+//
+// action values: "create" | "update" | "delete"
+// status values: "active"  | "inactive"
+// MemberIDs: JSON array string member.id (snapshot whitelist saat itu).
+// Pakai datatypes.JSON supaya GORM bisa serialize tanpa custom marshaler.
+type ProductPriceTierHistory struct {
+	ID         string         `gorm:"type:varchar(36);primary_key;not null" json:"id"`
+	TierID     string         `gorm:"type:varchar(36);not null;index" json:"tier_id"`
+	ProductID  string         `gorm:"type:varchar(36);not null;index" json:"product_id"`
+	MinQty     int            `gorm:"type:int;not null" json:"min_qty"`
+	Price      float64        `gorm:"type:decimal(15,2);not null" json:"price"`
+	TargetType string         `gorm:"type:varchar(20);not null" json:"target_type"`
+	MemberIDs  datatypes.JSON `gorm:"type:json;null" json:"member_ids,omitempty"`
+	Note       string         `gorm:"type:varchar(200);null" json:"note,omitempty"`
+	Status     string         `gorm:"type:varchar(20);not null;default:'active';index" json:"status"`
+	Action     string         `gorm:"type:varchar(20);not null" json:"action"`
+	StartDate  time.Time      `gorm:"not null;default:current_timestamp()" json:"start_date"`
+	EndDate    *time.Time     `gorm:"null" json:"end_date,omitempty"`
+	ChangedBy  *string        `gorm:"type:varchar(36);null" json:"changed_by,omitempty"`
+	CreatedAt  time.Time      `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
+}
+
+func (ProductPriceTierHistory) TableName() string { return "product_price_tier_history" }

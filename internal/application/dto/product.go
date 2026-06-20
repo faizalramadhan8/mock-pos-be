@@ -51,7 +51,7 @@ type ProductPriceTierResponse struct {
 	ProductID  string                      `json:"product_id"`
 	MinQty     int                         `json:"min_qty"`
 	Price      float64                     `json:"price"`
-	TargetType string                      `json:"target_type"`        // 'all_members' | 'member_specific'
+	TargetType string                      `json:"target_type"`        // 'all_customers' | 'member_specific'
 	Note       string                      `json:"note,omitempty"`
 	Members    []ProductPriceTierMemberRef `json:"members,omitempty"` // populated when target_type='member_specific'
 	CreatedAt  string                      `json:"created_at"`
@@ -62,9 +62,28 @@ type ProductPriceTierResponse struct {
 type SavePriceTierRequest struct {
 	MinQty     int      `json:"min_qty" validate:"required,min=1"`
 	Price      float64  `json:"price" validate:"required,min=0"`
-	TargetType string   `json:"target_type" validate:"required,oneof=all_members member_specific"`
+	TargetType string   `json:"target_type" validate:"required,oneof=all_customers member_specific"`
 	MemberIDs  []string `json:"member_ids,omitempty"`
 	Note       string   `json:"note"`
+}
+
+// ProductPriceTierHistoryResponse — audit row untuk perubahan tier.
+// status: "active"/"inactive" · action: "create"/"update"/"delete"
+type ProductPriceTierHistoryResponse struct {
+	ID         string   `json:"id"`
+	TierID     string   `json:"tier_id"`
+	ProductID  string   `json:"product_id"`
+	MinQty     int      `json:"min_qty"`
+	Price      float64  `json:"price"`
+	TargetType string   `json:"target_type"`
+	MemberIDs  []string `json:"member_ids,omitempty"`
+	Note       string   `json:"note,omitempty"`
+	Status     string   `json:"status"`
+	Action     string   `json:"action"`
+	StartDate  string   `json:"start_date"`
+	EndDate    *string  `json:"end_date,omitempty"`
+	ChangedBy  *string  `json:"changed_by,omitempty"`
+	CreatedAt  string   `json:"created_at"`
 }
 
 type ProductResponse struct {

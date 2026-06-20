@@ -30,6 +30,7 @@ func UseProductRouter(ctx context.Context, r fiber.Router) {
 	// Price tier CRUD — admin only. Walk-in customer tidak terdampak;
 	// tier hanya berlaku saat ada member aktif di cart.
 	products.Get("/:id/tiers", ctrl.ListPriceTiers)
+	products.Get("/:id/tier-history", auth.AllowAdmins(), ctrl.ListTierHistory)
 	products.Post("/:id/tiers", auth.AllowAdmins(), ctrl.CreatePriceTier)
 	products.Put("/:id/tiers/:tierId", auth.AllowAdmins(), ctrl.UpdatePriceTier)
 	products.Delete("/:id/tiers/:tierId", auth.AllowAdmins(), ctrl.DeletePriceTier)

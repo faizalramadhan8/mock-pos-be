@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -12,27 +13,30 @@ import (
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
 	"github.com/faizalramadhan/pos-be/internal/domain/repository"
 	"github.com/rs/zerolog"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
 type ProductService struct {
-	Log         *zerolog.Logger
-	DB          *gorm.DB
-	Repo        *repository.ProductRepository
-	HistoryRepo *repository.ProductPriceHistoryRepository
-	TierRepo    *repository.ProductPriceTierRepository
-	MemberRepo  *repository.MemberRepository
+	Log             *zerolog.Logger
+	DB              *gorm.DB
+	Repo            *repository.ProductRepository
+	HistoryRepo     *repository.ProductPriceHistoryRepository
+	TierRepo        *repository.ProductPriceTierRepository
+	TierHistoryRepo *repository.ProductPriceTierHistoryRepository
+	MemberRepo      *repository.MemberRepository
 }
 
 func NewProductService(ctx context.Context, db *gorm.DB) *ProductService {
 	logger := ctx.Value(enum.LoggerCtxKey).(*zerolog.Logger)
 	return &ProductService{
-		Log:         logger,
-		DB:          db,
-		Repo:        repository.NewProductRepository(ctx, db),
-		HistoryRepo: repository.NewProductPriceHistoryRepository(ctx, db),
-		TierRepo:    repository.NewProductPriceTierRepository(ctx, db),
-		MemberRepo:  repository.NewMemberRepository(ctx, db),
+		Log:             logger,
+		DB:              db,
+		Repo:            repository.NewProductRepository(ctx, db),
+		HistoryRepo:     repository.NewProductPriceHistoryRepository(ctx, db),
+		TierRepo:        repository.NewProductPriceTierRepository(ctx, db),
+		TierHistoryRepo: repository.NewProductPriceTierHistoryRepository(ctx, db),
+		MemberRepo:      repository.NewMemberRepository(ctx, db),
 	}
 }
 
@@ -545,7 +549,97 @@ func (s *ProductService) buildTierFromRequest(productID string, req dto.SavePric
 	return tier, nil
 }
 
-func (s *ProductService) CreatePriceTier(productID string, req dto.SavePriceTierRequest) (*dto.ProductPriceTierResponse, *dto.ApiError) {
+// logTierChange writes audit row(s) ke product_price_tier_history.
+// action: "create" | "update" | "delete".
+// Untuk "update"/"delete", close active row dulu (status=inactive, end_date=now).
+// Untuk "create"/"update", insert new active row dengan snapshot lengkap.
+// Best-effort: failure tidak block CRUD utama, cuma log warn.
+func (s *ProductService) logTierChange(tier *entity.ProductPriceTier, action string, changedBy *string) {
+	now := time.Now()
+	// Close active row kalau action ∈ {update, delete} — sebelum insert versi baru
+	// (atau jadi final state untuk delete).
+	if action == "update" || action == "delete" {
+		if err := s.TierHistoryRepo.CloseActive(tier.ID, now); err != nil {
+			s.Log.Warn().Err(err).Str("tier_id", tier.ID).Str("action", action).Msg("tier history: close active failed")
+		}
+	}
+	// Insert new row dengan snapshot. Untuk delete, snapshot pakai action=delete +
+	// status=inactive + end_date=now, supaya history punya tombstone.
+	memberIDsJSON := datatypes.JSON([]byte("null"))
+	if len(tier.Members) > 0 {
+		ids := make([]string, 0, len(tier.Members))
+		for _, m := range tier.Members {
+			ids = append(ids, m.ID)
+		}
+		if b, err := json.Marshal(ids); err == nil {
+			memberIDsJSON = datatypes.JSON(b)
+		}
+	}
+	row := &entity.ProductPriceTierHistory{
+		ID:         uuid.New().String(),
+		TierID:     tier.ID,
+		ProductID:  tier.ProductID,
+		MinQty:     tier.MinQty,
+		Price:      tier.Price,
+		TargetType: tier.TargetType,
+		MemberIDs:  memberIDsJSON,
+		Note:       tier.Note,
+		Action:     action,
+		StartDate:  now,
+		ChangedBy:  changedBy,
+	}
+	if action == "delete" {
+		row.Status = "inactive"
+		row.EndDate = &now
+	} else {
+		row.Status = "active"
+	}
+	if err := s.TierHistoryRepo.Create(row); err != nil {
+		s.Log.Warn().Err(err).Str("tier_id", tier.ID).Str("action", action).Msg("tier history: insert failed")
+	}
+}
+
+// ListTierHistory returns audit trail untuk semua tier sebuah produk
+// (termasuk tier yang sudah dihapus). Newest first.
+func (s *ProductService) ListTierHistory(productID string) ([]dto.ProductPriceTierHistoryResponse, *dto.ApiError) {
+	if _, err := s.Repo.FindByID(productID); err != nil {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Product not found"}
+	}
+	rows, err := s.TierHistoryRepo.FindByProduct(productID)
+	if err != nil {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to fetch tier history"}
+	}
+	out := make([]dto.ProductPriceTierHistoryResponse, 0, len(rows))
+	for _, r := range rows {
+		var memberIDs []string
+		if len(r.MemberIDs) > 0 && string(r.MemberIDs) != "null" {
+			_ = json.Unmarshal(r.MemberIDs, &memberIDs)
+		}
+		resp := dto.ProductPriceTierHistoryResponse{
+			ID:         r.ID,
+			TierID:     r.TierID,
+			ProductID:  r.ProductID,
+			MinQty:     r.MinQty,
+			Price:      r.Price,
+			TargetType: r.TargetType,
+			MemberIDs:  memberIDs,
+			Note:       r.Note,
+			Status:     r.Status,
+			Action:     r.Action,
+			StartDate:  r.StartDate.Format(time.RFC3339),
+			ChangedBy:  r.ChangedBy,
+			CreatedAt:  r.CreatedAt.Format(time.RFC3339),
+		}
+		if r.EndDate != nil {
+			s := r.EndDate.Format(time.RFC3339)
+			resp.EndDate = &s
+		}
+		out = append(out, resp)
+	}
+	return out, nil
+}
+
+func (s *ProductService) CreatePriceTier(productID string, req dto.SavePriceTierRequest, changedBy *string) (*dto.ProductPriceTierResponse, *dto.ApiError) {
 	if _, err := s.Repo.FindByID(productID); err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Product not found"}
 	}
@@ -563,11 +657,12 @@ func (s *ProductService) CreatePriceTier(productID string, req dto.SavePriceTier
 	if created != nil {
 		tier = created
 	}
+	s.logTierChange(tier, "create", changedBy)
 	resp := tierToResponse(tier)
 	return &resp, nil
 }
 
-func (s *ProductService) UpdatePriceTier(tierID string, req dto.SavePriceTierRequest) (*dto.ProductPriceTierResponse, *dto.ApiError) {
+func (s *ProductService) UpdatePriceTier(tierID string, req dto.SavePriceTierRequest, changedBy *string) (*dto.ProductPriceTierResponse, *dto.ApiError) {
 	existing, err := s.TierRepo.FindByID(tierID)
 	if err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Tier not found"}
@@ -585,14 +680,18 @@ func (s *ProductService) UpdatePriceTier(tierID string, req dto.SavePriceTierReq
 	if refreshed != nil {
 		updated = refreshed
 	}
+	s.logTierChange(updated, "update", changedBy)
 	resp := tierToResponse(updated)
 	return &resp, nil
 }
 
-func (s *ProductService) DeletePriceTier(tierID string) *dto.ApiError {
-	if _, err := s.TierRepo.FindByID(tierID); err != nil {
+func (s *ProductService) DeletePriceTier(tierID string, changedBy *string) *dto.ApiError {
+	existing, err := s.TierRepo.FindByID(tierID)
+	if err != nil {
 		return &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Tier not found"}
 	}
+	// Snapshot SEBELUM delete supaya history punya last-known state.
+	s.logTierChange(existing, "delete", changedBy)
 	if err := s.TierRepo.Delete(tierID); err != nil {
 		s.Log.Error().Err(err).Msg("Failed to delete tier")
 		return &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to delete tier"}

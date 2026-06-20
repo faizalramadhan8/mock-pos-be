@@ -70,6 +70,11 @@ type CreateOrderItemRequest struct {
 	// (tebus barang). UnitPrice × Quantity dipotong dari saldo poin.
 	// Harga item tidak include cash subtotal — supaya tidak earn poin lagi.
 	RedeemWithPoints bool `json:"redeem_with_points,omitempty"`
+	// PriceSource: tag sumber harga (audit). Default 'regular'.
+	// Values: 'regular' | 'member_price' | 'tier_all' | 'tier_member'.
+	PriceSource string `json:"price_source,omitempty"`
+	// TierID: kalau harga datang dari tier match, ID tier yang dipakai.
+	TierID *string `json:"tier_id,omitempty"`
 }
 
 type OrderMemberInfo struct {
@@ -126,6 +131,8 @@ type OrderItemResponse struct {
 	DiscountValue      float64  `json:"discount_value,omitempty"`
 	DiscountAmount     float64  `json:"discount_amount,omitempty"`
 	RedeemedWithPoints bool     `json:"redeemed_with_points,omitempty"`
+	PriceSource        string   `json:"price_source,omitempty"`
+	TierID             *string  `json:"tier_id,omitempty"`
 }
 
 type OrderListRequest struct {

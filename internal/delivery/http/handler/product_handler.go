@@ -176,6 +176,31 @@ func (ctrl *ProductController) ListPriceTiers(c *fiber.Ctx) error {
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "successfully", Body: tiers})
 }
 
+// ListTierHistory GET /products/:id/tier-history — audit trail tier CRUD.
+func (ctrl *ProductController) ListTierHistory(c *fiber.Ctx) error {
+	id := c.Params("id")
+	rows, fail := ctrl.Service.ListTierHistory(id)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "successfully", Body: rows})
+}
+
+// userIDFromCtx — extract user_id dari JWT session claims di Fiber locals.
+// Return nil kalau tidak ada (akan jadi NULL di changed_by).
+func userIDFromCtx(c *fiber.Ctx) *string {
+	v := c.Locals("session")
+	if v == nil {
+		return nil
+	}
+	claims, ok := v.(*dto.JWTClaims)
+	if !ok || claims.ID == "" {
+		return nil
+	}
+	id := claims.ID
+	return &id
+}
+
 // CreatePriceTier POST /products/:id/tiers
 func (ctrl *ProductController) CreatePriceTier(c *fiber.Ctx) error {
 	id := c.Params("id")
@@ -186,7 +211,7 @@ func (ctrl *ProductController) CreatePriceTier(c *fiber.Ctx) error {
 	if err := util.ValidateRequest(req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{Code: fiber.ErrBadRequest.Code, Message: fiber.ErrBadRequest.Message, Error: err})
 	}
-	resp, fail := ctrl.Service.CreatePriceTier(id, req)
+	resp, fail := ctrl.Service.CreatePriceTier(id, req, userIDFromCtx(c))
 	if fail != nil {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
 	}
@@ -203,7 +228,7 @@ func (ctrl *ProductController) UpdatePriceTier(c *fiber.Ctx) error {
 	if err := util.ValidateRequest(req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{Code: fiber.ErrBadRequest.Code, Message: fiber.ErrBadRequest.Message, Error: err})
 	}
-	resp, fail := ctrl.Service.UpdatePriceTier(tierID, req)
+	resp, fail := ctrl.Service.UpdatePriceTier(tierID, req, userIDFromCtx(c))
 	if fail != nil {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
 	}
@@ -213,7 +238,7 @@ func (ctrl *ProductController) UpdatePriceTier(c *fiber.Ctx) error {
 // DeletePriceTier DELETE /products/:id/tiers/:tierId
 func (ctrl *ProductController) DeletePriceTier(c *fiber.Ctx) error {
 	tierID := c.Params("tierId")
-	if fail := ctrl.Service.DeletePriceTier(tierID); fail != nil {
+	if fail := ctrl.Service.DeletePriceTier(tierID, userIDFromCtx(c)); fail != nil {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
 	}
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Tier deleted"})

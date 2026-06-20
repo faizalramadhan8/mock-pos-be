@@ -280,6 +280,10 @@ func (s *OrderService) Create(req dto.CreateOrderRequest, userID string) (*dto.O
 	}
 
 	for _, item := range req.Items {
+		ps := item.PriceSource
+		if ps == "" {
+			ps = "regular"
+		}
 		orderItem := entity.OrderItem{
 			ID:                 uuid.New().String(),
 			OrderID:            order.ID,
@@ -294,6 +298,8 @@ func (s *OrderService) Create(req dto.CreateOrderRequest, userID string) (*dto.O
 			DiscountValue:      item.DiscountValue,
 			DiscountAmount:     item.DiscountAmount,
 			RedeemedWithPoints: item.RedeemWithPoints,
+			PriceSource:        ps,
+			TierID:             item.TierID,
 		}
 		if orderItem.UnitType == "" {
 			orderItem.UnitType = "individual"
@@ -1023,6 +1029,10 @@ func (s *OrderService) CreatePending(req dto.CreatePendingOrderRequest, userID s
 	}
 
 	for _, item := range req.Items {
+		ps := item.PriceSource
+		if ps == "" {
+			ps = "regular"
+		}
 		orderItem := entity.OrderItem{
 			ID:                 uuid.New().String(),
 			OrderID:            order.ID,
@@ -1037,6 +1047,8 @@ func (s *OrderService) CreatePending(req dto.CreatePendingOrderRequest, userID s
 			DiscountValue:      item.DiscountValue,
 			DiscountAmount:     item.DiscountAmount,
 			RedeemedWithPoints: item.RedeemWithPoints,
+			PriceSource:        ps,
+			TierID:             item.TierID,
 		}
 		if orderItem.UnitType == "" {
 			orderItem.UnitType = "individual"
@@ -1347,6 +1359,8 @@ func (s *OrderService) toResponse(o *entity.Order) dto.OrderResponse {
 			DiscountValue:      item.DiscountValue,
 			DiscountAmount:     item.DiscountAmount,
 			RedeemedWithPoints: item.RedeemedWithPoints,
+			PriceSource:        item.PriceSource,
+			TierID:             item.TierID,
 		})
 	}
 	if o.MemberID != nil && savings > 0 {
