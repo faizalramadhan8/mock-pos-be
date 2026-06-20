@@ -54,4 +54,7 @@ func UseRouter(ctx context.Context, r fiber.Router) {
 
 	// Push Notifications
 	UsePushRouter(ctx, prefix)
+
+	// Redeemable Items (Katalog Tebus Poin — barang khusus untuk redeem)
+	UseRedeemableRouter(ctx, prefix)
 }

@@ -288,6 +288,7 @@ func (s *OrderService) Create(req dto.CreateOrderRequest, userID string) (*dto.O
 			ID:                 uuid.New().String(),
 			OrderID:            order.ID,
 			ProductID:          item.ProductID,
+			RedeemableItemID:   item.RedeemableItemID,
 			Name:               item.Name,
 			Quantity:           item.Quantity,
 			UnitType:           item.UnitType,
@@ -300,12 +301,48 @@ func (s *OrderService) Create(req dto.CreateOrderRequest, userID string) (*dto.O
 			RedeemedWithPoints: item.RedeemWithPoints,
 			PriceSource:        ps,
 			TierID:             item.TierID,
+			PaketCount:         item.PaketCount,
+			ExtraCount:         item.ExtraCount,
 		}
 		if orderItem.UnitType == "" {
 			orderItem.UnitType = "individual"
 		}
 
-		// Deduct stock
+		// REDEEM ROW (dari redeemable_items table) — flow stok terpisah dari
+		// products. unit_price = points_cost (admin-set). Decrement
+		// redeemable_items.stock + increment redeemable_items.redeemed.
+		// Tidak ada stock_movement / FIFO / product lookup.
+		if item.RedeemableItemID != nil && *item.RedeemableItemID != "" {
+			var ri entity.RedeemableItem
+			if err := tx.Where("id = ?", *item.RedeemableItemID).First(&ri).Error; err != nil {
+				tx.Rollback()
+				return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Redeemable item not found"}
+			}
+			if !ri.IsActive {
+				tx.Rollback()
+				return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Item tebus tidak aktif: " + ri.Name}
+			}
+			if ri.Stock < item.Quantity {
+				tx.Rollback()
+				return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Stok tebus habis: " + ri.Name}
+			}
+			if err := tx.Model(&entity.RedeemableItem{}).Where("id = ?", *item.RedeemableItemID).
+				Updates(map[string]interface{}{
+					"stock":    gorm.Expr("stock - ?", item.Quantity),
+					"redeemed": gorm.Expr("redeemed + ?", item.Quantity),
+				}).Error; err != nil {
+				tx.Rollback()
+				return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to deduct redeemable stock"}
+			}
+			// Snapshot harga: redeem rows tidak punya regular/purchase price.
+			zero := 0.0
+			orderItem.RegularPrice = &zero
+			orderItem.PurchasePrice = 0
+			order.Items = append(order.Items, orderItem)
+			continue
+		}
+
+		// NORMAL PRODUCT ROW — flow stok via products table.
 		product, err := s.ProductRepo.FindByID(item.ProductID)
 		if err != nil {
 			tx.Rollback()
@@ -357,16 +394,16 @@ func (s *OrderService) Create(req dto.CreateOrderRequest, userID string) (*dto.O
 		// can reconstruct stock-out history. Tanpa ini, "Total Barang Keluar"
 		// dan Recent Movements jadi kosong.
 		if err := tx.Create(&entity.StockMovement{
-			ID:         uuid.New().String(),
-			ProductID:  item.ProductID,
-			Type:       "out",
-			Quantity:   stockDelta,
-			UnitType:   item.UnitType,
-			UnitPrice:  item.UnitPrice,
-			Reason:     "sale",
-			Note:       "Sale (Order #" + order.ID + ")",
-			CreatedBy:  userID,
-			CreatedAt:  time.Now(),
+			ID:        uuid.New().String(),
+			ProductID: item.ProductID,
+			Type:      "out",
+			Quantity:  stockDelta,
+			UnitType:  item.UnitType,
+			UnitPrice: item.UnitPrice,
+			Reason:    "sale",
+			Note:      "Sale (Order #" + order.ID + ")",
+			CreatedBy: userID,
+			CreatedAt: time.Now(),
 		}).Error; err != nil {
 			tx.Rollback()
 			return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to record stock movement"}
@@ -389,7 +426,18 @@ func (s *OrderService) Create(req dto.CreateOrderRequest, userID string) (*dto.O
 	// saldo + log). Earn dihitung dari cashSubtotal — strict kelipatan 100k.
 	// Loop in/out poin tidak ada karena item yang ditebus tidak masuk
 	// cashSubtotal (sudah dipisah di awal).
+	//
+	// SKIP EARN kalau order ini ada item ke-discount via tier 'member_specific'
+	// (per request Bu Santi 21 Jun 2026): member yang sudah dapat harga
+	// khusus reseller tidak boleh dobel benefit dengan earn poin lagi. Redeem
+	// tetap di-apply (kalau ada) — yang di-skip hanya earn.
 	pointsEarned := calculateEarnedPoints(cashSubtotal)
+	for _, it := range order.Items {
+		if it.PriceSource == "tier_member" {
+			pointsEarned = 0
+			break
+		}
+	}
 	if req.MemberID != nil && *req.MemberID != "" && (pointsToRedeem > 0 || pointsEarned > 0) {
 		if apiErr := s.applyPointsChange(tx, *req.MemberID, order.ID, userID, pointsToRedeem, pointsEarned); apiErr != nil {
 			tx.Rollback()
@@ -1037,6 +1085,7 @@ func (s *OrderService) CreatePending(req dto.CreatePendingOrderRequest, userID s
 			ID:                 uuid.New().String(),
 			OrderID:            order.ID,
 			ProductID:          item.ProductID,
+			RedeemableItemID:   item.RedeemableItemID,
 			Name:               item.Name,
 			Quantity:           item.Quantity,
 			UnitType:           item.UnitType,
@@ -1049,9 +1098,20 @@ func (s *OrderService) CreatePending(req dto.CreatePendingOrderRequest, userID s
 			RedeemedWithPoints: item.RedeemWithPoints,
 			PriceSource:        ps,
 			TierID:             item.TierID,
+			PaketCount:         item.PaketCount,
+			ExtraCount:         item.ExtraCount,
 		}
 		if orderItem.UnitType == "" {
 			orderItem.UnitType = "individual"
+		}
+		// REDEEM ROW: snapshot only, stok di-decrement saat MarkAsPaid
+		// (konsisten dengan flow normal yang juga tunda decrement).
+		if item.RedeemableItemID != nil && *item.RedeemableItemID != "" {
+			zero := 0.0
+			orderItem.RegularPrice = &zero
+			orderItem.PurchasePrice = 0
+			order.Items = append(order.Items, orderItem)
+			continue
 		}
 		// Snapshot regular & purchase price (same as Create), but DO NOT
 		// decrement stock — that happens in MarkAsPaid.
@@ -1117,6 +1177,27 @@ func (s *OrderService) MarkAsPaid(orderID string, req dto.MarkAsPaidRequest, use
 
 	// Now decrement stock (was not decremented at pending creation).
 	for _, item := range order.Items {
+		// REDEEM ROW: decrement redeemable_items.stock + redeemed counter.
+		if item.RedeemableItemID != nil && *item.RedeemableItemID != "" {
+			var ri entity.RedeemableItem
+			if err := tx.Where("id = ?", *item.RedeemableItemID).First(&ri).Error; err != nil {
+				tx.Rollback()
+				return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Redeemable item not found"}
+			}
+			if ri.Stock < item.Quantity {
+				tx.Rollback()
+				return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Stok tebus habis: " + ri.Name}
+			}
+			if err := tx.Model(&entity.RedeemableItem{}).Where("id = ?", *item.RedeemableItemID).
+				Updates(map[string]interface{}{
+					"stock":    gorm.Expr("stock - ?", item.Quantity),
+					"redeemed": gorm.Expr("redeemed + ?", item.Quantity),
+				}).Error; err != nil {
+				tx.Rollback()
+				return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to deduct redeemable stock"}
+			}
+			continue
+		}
 		stockDelta := item.Quantity
 		if item.UnitType == "box" {
 			prod, _ := s.ProductRepo.FindByID(item.ProductID)
@@ -1194,6 +1275,15 @@ func (s *OrderService) MarkAsPaid(orderID string, req dto.MarkAsPaidRequest, use
 		}
 	}
 	pointsEarned := calculateEarnedPoints(cashSubtotal)
+	// SKIP EARN kalau order ada item tier_member (member-specific discount).
+	// Lihat catatan di Create — Bu Santi: member sudah dapat harga khusus
+	// reseller tidak boleh dobel benefit. Redeem tetap di-apply.
+	for _, it := range order.Items {
+		if it.PriceSource == "tier_member" {
+			pointsEarned = 0
+			break
+		}
+	}
 	if order.MemberID != nil && *order.MemberID != "" && (pointsToRedeem > 0 || pointsEarned > 0) {
 		if apiErr := s.applyPointsChange(tx, *order.MemberID, order.ID, userID, pointsToRedeem, pointsEarned); apiErr != nil {
 			tx.Rollback()
@@ -1349,6 +1439,7 @@ func (s *OrderService) toResponse(o *entity.Order) dto.OrderResponse {
 		resp.Items = append(resp.Items, dto.OrderItemResponse{
 			ID:                 item.ID,
 			ProductID:          item.ProductID,
+			RedeemableItemID:   item.RedeemableItemID,
 			Name:               item.Name,
 			Quantity:           item.Quantity,
 			UnitType:           item.UnitType,
@@ -1361,6 +1452,8 @@ func (s *OrderService) toResponse(o *entity.Order) dto.OrderResponse {
 			RedeemedWithPoints: item.RedeemedWithPoints,
 			PriceSource:        item.PriceSource,
 			TierID:             item.TierID,
+			PaketCount:         item.PaketCount,
+			ExtraCount:         item.ExtraCount,
 		})
 	}
 	if o.MemberID != nil && savings > 0 {

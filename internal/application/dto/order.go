@@ -56,8 +56,11 @@ type CreatePendingOrderRequest struct {
 }
 
 type CreateOrderItemRequest struct {
-	ProductID      string   `json:"product_id" validate:"required"`
-	Name           string   `json:"name" validate:"required"`
+	// ProductID: required UNLESS RedeemableItemID set (redeem row).
+	// Validation: exactly one of {ProductID, RedeemableItemID} non-empty.
+	ProductID        string  `json:"product_id"`
+	RedeemableItemID *string `json:"redeemable_item_id,omitempty"`
+	Name             string  `json:"name" validate:"required"`
 	Quantity       int      `json:"quantity" validate:"required,min=1"`
 	UnitType       string   `json:"unit_type"`
 	UnitPrice      float64  `json:"unit_price"`
@@ -75,6 +78,10 @@ type CreateOrderItemRequest struct {
 	PriceSource string `json:"price_source,omitempty"`
 	// TierID: kalau harga datang dari tier match, ID tier yang dipakai.
 	TierID *string `json:"tier_id,omitempty"`
+	// PaketCount + ExtraCount: snapshot paket logic.
+	// Sum dari qty_satuan harus = paket_count*tier.min_qty + extra_count.
+	PaketCount int `json:"paket_count,omitempty"`
+	ExtraCount int `json:"extra_count,omitempty"`
 }
 
 type OrderMemberInfo struct {
@@ -120,7 +127,8 @@ type OrderPaymentResponse struct {
 
 type OrderItemResponse struct {
 	ID                 string   `json:"id"`
-	ProductID          string   `json:"product_id"`
+	ProductID          string   `json:"product_id,omitempty"`
+	RedeemableItemID   *string  `json:"redeemable_item_id,omitempty"`
 	Name               string   `json:"name"`
 	Quantity           int      `json:"quantity"`
 	UnitType           string   `json:"unit_type"`
@@ -133,6 +141,8 @@ type OrderItemResponse struct {
 	RedeemedWithPoints bool     `json:"redeemed_with_points,omitempty"`
 	PriceSource        string   `json:"price_source,omitempty"`
 	TierID             *string  `json:"tier_id,omitempty"`
+	PaketCount         int      `json:"paket_count,omitempty"`
+	ExtraCount         int      `json:"extra_count,omitempty"`
 }
 
 type OrderListRequest struct {

@@ -32,9 +32,14 @@ type Order struct {
 func (Order) TableName() string { return "orders" }
 
 type OrderItem struct {
-	ID             string    `gorm:"type:varchar(36);primary_key;not null" json:"id"`
-	OrderID        string    `gorm:"type:varchar(36);not null" json:"order_id"`
-	ProductID      string    `gorm:"type:varchar(36);not null" json:"product_id"`
+	ID      string `gorm:"type:varchar(36);primary_key;not null" json:"id"`
+	OrderID string `gorm:"type:varchar(36);not null" json:"order_id"`
+	// ProductID: empty string ("") kalau row ini redeem dari redeemable_items
+	// table. Cek `RedeemableItemID != nil` untuk detect redeem row.
+	ProductID string `gorm:"type:varchar(36);null" json:"product_id"`
+	// RedeemableItemID nullable FK ke redeemable_items. ON DELETE SET NULL
+	// supaya delete item tebus tidak hilang history order. Lihat migration 000041.
+	RedeemableItemID *string `gorm:"column:redeemable_item_id;type:varchar(36);null" json:"redeemable_item_id,omitempty"`
 	Name           string    `gorm:"type:varchar(200);not null" json:"name"`
 	Quantity       int       `gorm:"type:int;not null;default:1" json:"quantity"`
 	UnitType       string    `gorm:"type:varchar(20);not null;default:'individual'" json:"unit_type"`
@@ -54,8 +59,14 @@ type OrderItem struct {
 	PriceSource string `gorm:"column:price_source;type:varchar(20);not null;default:'regular'" json:"price_source"`
 	// TierID: nullable FK ke product_price_tiers kalau harga dari tier match.
 	// ON DELETE SET NULL — delete tier tidak hilang history order.
-	TierID    *string   `gorm:"column:tier_id;type:varchar(36);null" json:"tier_id,omitempty"`
-	CreatedAt time.Time `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
+	TierID *string `gorm:"column:tier_id;type:varchar(36);null" json:"tier_id,omitempty"`
+	// PaketCount + ExtraCount: snapshot pecahan paket dari paket logic.
+	// paket_count = floor(qty_satuan / tier.min_qty), extra = sisa.
+	// Disnapshot supaya laporan bundling tetap akurat walaupun tier dihapus.
+	// Lihat migration 000039.
+	PaketCount int       `gorm:"column:paket_count;type:int;not null;default:0" json:"paket_count"`
+	ExtraCount int       `gorm:"column:extra_count;type:int;not null;default:0" json:"extra_count"`
+	CreatedAt  time.Time `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
 }
 
 func (OrderItem) TableName() string { return "order_items" }

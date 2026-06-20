@@ -90,7 +90,7 @@ func FormatReceipt(order *entity.Order, storeName, storeAddress, storePhone, cas
 	// Summary
 	fmt.Fprintf(&b, "Subtotal: %s\n", rp(gross))
 	if memberSavings > 0 {
-		fmt.Fprintf(&b, "Hemat Member: -%s\n", rp(memberSavings))
+		fmt.Fprintf(&b, "Hemat: -%s\n", rp(memberSavings))
 	}
 	if pointsUsed > 0 {
 		fmt.Fprintf(&b, "Poin Dipakai: -%s poin\n", thousand(int64(pointsUsed)))
