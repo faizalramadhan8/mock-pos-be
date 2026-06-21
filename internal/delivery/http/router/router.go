@@ -57,4 +57,7 @@ func UseRouter(ctx context.Context, r fiber.Router) {
 
 	// Redeemable Items (Katalog Tebus Poin — barang khusus untuk redeem)
 	UseRedeemableRouter(ctx, prefix)
+
+	// Capital Injections (Setoran Modal Owner — IN ke kas di luar penjualan)
+	UseCapitalRouter(ctx, prefix)
 }
