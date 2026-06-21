@@ -54,17 +54,23 @@ type ProductPriceTierResponse struct {
 	TargetType string                      `json:"target_type"`        // 'all_customers' | 'member_specific'
 	Note       string                      `json:"note,omitempty"`
 	Members    []ProductPriceTierMemberRef `json:"members,omitempty"` // populated when target_type='member_specific'
-	CreatedAt  string                      `json:"created_at"`
+	// ExpiresAt RFC3339 string. NULL = tidak terbatas. Tier dengan
+	// expires_at < NOW di-skip di POS compute.
+	ExpiresAt *string `json:"expires_at,omitempty"`
+	CreatedAt string  `json:"created_at"`
 }
 
 // SavePriceTierRequest digunakan untuk Create + Update tier (same body).
 // MemberIDs hanya wajib kalau TargetType='member_specific'.
+// DurationDays: opsi durasi tier (1/3/6/12/30 hari). 0 atau omit = tidak
+// terbatas (expires_at = NULL). Server hitung expires_at = NOW + duration.
 type SavePriceTierRequest struct {
-	MinQty     int      `json:"min_qty" validate:"required,min=1"`
-	Price      float64  `json:"price" validate:"required,min=0"`
-	TargetType string   `json:"target_type" validate:"required,oneof=all_customers member_specific"`
-	MemberIDs  []string `json:"member_ids,omitempty"`
-	Note       string   `json:"note"`
+	MinQty       int      `json:"min_qty" validate:"required,min=1"`
+	Price        float64  `json:"price" validate:"required,min=0"`
+	TargetType   string   `json:"target_type" validate:"required,oneof=all_customers member_specific"`
+	MemberIDs    []string `json:"member_ids,omitempty"`
+	Note         string   `json:"note"`
+	DurationDays int      `json:"duration_days,omitempty" validate:"omitempty,oneof=1 3 6 12 30"`
 }
 
 // ProductPriceTierHistoryResponse — audit row untuk perubahan tier.
@@ -78,6 +84,7 @@ type ProductPriceTierHistoryResponse struct {
 	TargetType string   `json:"target_type"`
 	MemberIDs  []string `json:"member_ids,omitempty"`
 	Note       string   `json:"note,omitempty"`
+	ExpiresAt  *string  `json:"expires_at,omitempty"`
 	Status     string   `json:"status"`
 	Action     string   `json:"action"`
 	StartDate  string   `json:"start_date"`

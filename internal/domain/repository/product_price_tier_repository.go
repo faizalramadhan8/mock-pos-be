@@ -47,12 +47,14 @@ func (r *ProductPriceTierRepository) Create(tier *entity.ProductPriceTier) error
 // Caller passes the desired final list in tier.Members.
 func (r *ProductPriceTierRepository) Update(tier *entity.ProductPriceTier) error {
 	return r.DB.Transaction(func(tx *gorm.DB) error {
-		// Update scalar fields first.
+		// Update scalar fields first. expires_at di-update walaupun NULL —
+		// admin bisa change dari "1 hari" ke "tidak terbatas" (NULL).
 		if err := tx.Model(&entity.ProductPriceTier{}).Where("id = ?", tier.ID).Updates(map[string]interface{}{
 			"min_qty":     tier.MinQty,
 			"price":       tier.Price,
 			"target_type": tier.TargetType,
 			"note":        tier.Note,
+			"expires_at":  tier.ExpiresAt,
 		}).Error; err != nil {
 			return err
 		}

@@ -493,6 +493,10 @@ func tierToResponse(t *entity.ProductPriceTier) dto.ProductPriceTierResponse {
 		Note:       t.Note,
 		CreatedAt:  t.CreatedAt.Format(time.RFC3339),
 	}
+	if t.ExpiresAt != nil {
+		s := t.ExpiresAt.Format(time.RFC3339)
+		out.ExpiresAt = &s
+	}
 	if len(t.Members) > 0 {
 		out.Members = make([]dto.ProductPriceTierMemberRef, 0, len(t.Members))
 		for _, m := range t.Members {
@@ -530,6 +534,12 @@ func (s *ProductService) buildTierFromRequest(productID string, req dto.SavePric
 		Price:      req.Price,
 		TargetType: req.TargetType,
 		Note:       req.Note,
+	}
+	// Tier expiry: DurationDays > 0 → set expires_at = NOW + duration.
+	// 0/omit = tidak terbatas (NULL).
+	if req.DurationDays > 0 {
+		exp := time.Now().AddDate(0, 0, req.DurationDays)
+		tier.ExpiresAt = &exp
 	}
 	if req.TargetType == "member_specific" {
 		if len(req.MemberIDs) == 0 {
@@ -584,6 +594,7 @@ func (s *ProductService) logTierChange(tier *entity.ProductPriceTier, action str
 		TargetType: tier.TargetType,
 		MemberIDs:  memberIDsJSON,
 		Note:       tier.Note,
+		ExpiresAt:  tier.ExpiresAt,
 		Action:     action,
 		StartDate:  now,
 		ChangedBy:  changedBy,
@@ -633,6 +644,10 @@ func (s *ProductService) ListTierHistory(productID string) ([]dto.ProductPriceTi
 		if r.EndDate != nil {
 			s := r.EndDate.Format(time.RFC3339)
 			resp.EndDate = &s
+		}
+		if r.ExpiresAt != nil {
+			s := r.ExpiresAt.Format(time.RFC3339)
+			resp.ExpiresAt = &s
 		}
 		out = append(out, resp)
 	}

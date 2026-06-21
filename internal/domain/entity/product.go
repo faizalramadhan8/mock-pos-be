@@ -58,14 +58,19 @@ func (Product) TableName() string { return "products" }
 // (qty × qty_per_box) sebelum compare. price = harga per satuan juga (bukan
 // per dus) — konsisten dengan member_price/selling_price baseline.
 type ProductPriceTier struct {
-	ID         string    `gorm:"type:varchar(36);primary_key;not null" json:"id"`
-	ProductID  string    `gorm:"column:product_id;type:varchar(36);not null" json:"product_id"`
-	MinQty     int       `gorm:"column:min_qty;type:int;not null" json:"min_qty"`
-	Price      float64   `gorm:"type:decimal(15,2);not null" json:"price"`
-	TargetType string    `gorm:"column:target_type;type:varchar(20);not null" json:"target_type"` // 'all_customers' | 'member_specific'
-	Note       string    `gorm:"type:varchar(200);null" json:"note,omitempty"`
-	CreatedAt  time.Time `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
-	UpdatedAt  time.Time `gorm:"default:current_timestamp()" json:"updated_at,omitempty"`
+	ID         string     `gorm:"type:varchar(36);primary_key;not null" json:"id"`
+	ProductID  string     `gorm:"column:product_id;type:varchar(36);not null" json:"product_id"`
+	MinQty     int        `gorm:"column:min_qty;type:int;not null" json:"min_qty"`
+	Price      float64    `gorm:"type:decimal(15,2);not null" json:"price"`
+	TargetType string     `gorm:"column:target_type;type:varchar(20);not null" json:"target_type"` // 'all_customers' | 'member_specific'
+	Note       string     `gorm:"type:varchar(200);null" json:"note,omitempty"`
+	// ExpiresAt: tier auto-balik ke harga normal setelah ini. NULL = tidak
+	// terbatas. Per request Bu Santi 21 Jun 2026 — durasi opt-in (1/3/6/12/30
+	// hari) untuk promo terbatas. POS compute skip tier dengan expires_at <
+	// NOW. Lihat migration 000042.
+	ExpiresAt *time.Time `gorm:"column:expires_at;type:datetime;null;index" json:"expires_at,omitempty"`
+	CreatedAt time.Time  `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
+	UpdatedAt time.Time  `gorm:"default:current_timestamp()" json:"updated_at,omitempty"`
 
 	// Members: kalau target_type='member_specific', list whitelist member.
 	// Preloaded via gorm many2many. Empty untuk target_type='all_customers'.
@@ -125,6 +130,7 @@ type ProductPriceTierHistory struct {
 	TargetType string         `gorm:"type:varchar(20);not null" json:"target_type"`
 	MemberIDs  datatypes.JSON `gorm:"type:json;null" json:"member_ids,omitempty"`
 	Note       string         `gorm:"type:varchar(200);null" json:"note,omitempty"`
+	ExpiresAt  *time.Time     `gorm:"column:expires_at;type:datetime;null" json:"expires_at,omitempty"`
 	Status     string         `gorm:"type:varchar(20);not null;default:'active';index" json:"status"`
 	Action     string         `gorm:"type:varchar(20);not null" json:"action"`
 	StartDate  time.Time      `gorm:"not null;default:current_timestamp()" json:"start_date"`
