@@ -30,9 +30,14 @@ func NewCapitalInjectionService(ctx context.Context, db *gorm.DB) *CapitalInject
 }
 
 func (s *CapitalInjectionService) toResponse(r *entity.CapitalInjection) dto.CapitalInjectionResponse {
+	t := r.Type
+	if t == "" {
+		t = "injection"
+	}
 	return dto.CapitalInjectionResponse{
 		ID:         r.ID,
 		Amount:     r.Amount,
+		Type:       t,
 		Source:     r.Source,
 		Note:       r.Note,
 		InjectedAt: r.InjectedAt.Format(time.RFC3339),
@@ -83,9 +88,14 @@ func (s *CapitalInjectionService) Create(req dto.SaveCapitalInjectionRequest, us
 	if err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Invalid injected_at format (YYYY-MM-DD)"}
 	}
+	t := req.Type
+	if t == "" {
+		t = "injection"
+	}
 	row := &entity.CapitalInjection{
 		ID:         uuid.New().String(),
 		Amount:     req.Amount,
+		Type:       t,
 		Source:     req.Source,
 		Note:       req.Note,
 		InjectedAt: injectedAt,
@@ -109,6 +119,9 @@ func (s *CapitalInjectionService) Update(id string, req dto.SaveCapitalInjection
 		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Invalid injected_at format"}
 	}
 	row.Amount = req.Amount
+	if req.Type != "" {
+		row.Type = req.Type
+	}
 	row.Source = req.Source
 	row.Note = req.Note
 	row.InjectedAt = injectedAt
