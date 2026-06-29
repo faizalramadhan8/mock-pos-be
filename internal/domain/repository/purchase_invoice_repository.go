@@ -16,8 +16,12 @@ func NewPurchaseInvoiceRepository(ctx context.Context, db *gorm.DB) *PurchaseInv
 	return &PurchaseInvoiceRepository{DB: db}
 }
 
-// FindAll dengan filter status, supplier, date range. Order by invoice_date
-// DESC (faktur terbaru di atas) untuk UX list view.
+// FindAll dengan filter status, supplier, date range.
+// Filter + Order pakai due_date (jatuh tempo) per request Bu Santi 29 Jun
+// 2026 — owner mau monitor "apa yang akan jatuh tempo bulan ini" bukan
+// "apa yang diterbitkan bulan ini". Order: due_date ASC supaya yang paling
+// dekat jatuh tempo di atas (priority action). Faktur tanpa due_date
+// jatuh ke bawah via COALESCE.
 func (r *PurchaseInvoiceRepository) FindAll(status, supplierID, from, to string, limit, offset int) ([]entity.PurchaseInvoice, int64, error) {
 	var invoices []entity.PurchaseInvoice
 	var total int64
@@ -30,15 +34,15 @@ func (r *PurchaseInvoiceRepository) FindAll(status, supplierID, from, to string,
 		q = q.Where("supplier_id = ?", supplierID)
 	}
 	if from != "" {
-		q = q.Where("DATE(invoice_date) >= ?", from)
+		q = q.Where("DATE(due_date) >= ?", from)
 	}
 	if to != "" {
-		q = q.Where("DATE(invoice_date) <= ?", to)
+		q = q.Where("DATE(due_date) <= ?", to)
 	}
 	q.Count(&total)
 
 	if err := q.Preload("Supplier").Preload("Items").Preload("Items.Product").
-		Order("invoice_date DESC").Limit(limit).Offset(offset).Find(&invoices).Error; err != nil {
+		Order("due_date IS NULL, due_date ASC, invoice_date DESC").Limit(limit).Offset(offset).Find(&invoices).Error; err != nil {
 		return nil, 0, err
 	}
 	return invoices, total, nil
