@@ -762,6 +762,84 @@ func (s *OrderService) CancelOrder(id string) (*dto.OrderResponse, *dto.ApiError
 	return &resp, nil
 }
 
+// EditPayments — admin/superadmin ubah metode pembayaran order yang sudah
+// completed. Skenario: kasir salah pilih Transfer padahal QRIS → selisih
+// saat closing kas. Bu Santi 12 Jul 2026.
+//
+// Behavior:
+//   - Order harus status='completed' (pending/cancelled tidak bisa edit)
+//   - sum(new payments) HARUS = order.total (validated)
+//   - Delete existing order_payments rows + insert new ones
+//   - Update orders.payment (primary = largest amount)
+//   - Set payments_edited_at/by/reason untuk audit inline
+//   - Detail action tetap ke audit_log via FE
+//
+// NOT changed: total, items, stock, points, member — cuma metode bayar.
+func (s *OrderService) EditPayments(orderID string, req dto.EditPaymentsRequest, userID string) (*dto.OrderResponse, *dto.ApiError) {
+	order, err := s.Repo.FindByID(orderID)
+	if err != nil {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Order not found"}
+	}
+	if order.Status != "completed" {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Hanya order yang sudah completed bisa diubah metode bayar-nya"}
+	}
+
+	// Validate sum
+	var sum float64
+	for _, p := range req.Payments {
+		sum += p.Amount
+	}
+	// Tolerance 1 cent untuk decimal float rounding.
+	if diff := sum - order.Total; diff > 0.01 || diff < -0.01 {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: fmt.Sprintf("Total pembayaran (Rp %.0f) tidak sama dengan total order (Rp %.0f)", sum, order.Total)}
+	}
+
+	tx := s.DB.Begin()
+	if tx.Error != nil {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to start transaction"}
+	}
+
+	// Delete existing payments
+	if err := tx.Where("order_id = ?", order.ID).Delete(&entity.OrderPayment{}).Error; err != nil {
+		tx.Rollback()
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to clear existing payments"}
+	}
+
+	// Insert new payments
+	for _, p := range req.Payments {
+		if err := tx.Create(&entity.OrderPayment{
+			ID:      uuid.New().String(),
+			OrderID: order.ID,
+			Method:  p.Method,
+			Amount:  p.Amount,
+		}).Error; err != nil {
+			tx.Rollback()
+			return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to save payment"}
+		}
+	}
+
+	// Update order fields
+	now := time.Now()
+	reason := req.Reason
+	order.Payment = primaryPaymentMethod(req.Payments)
+	order.PaymentsEditedAt = &now
+	order.PaymentsEditedBy = &userID
+	order.PaymentsEditedReason = &reason
+	if err := s.Repo.Update(order); err != nil {
+		tx.Rollback()
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to update order"}
+	}
+	tx.Commit()
+
+	// Re-fetch to get updated Payments preload
+	updated, _ := s.Repo.FindByID(order.ID)
+	if updated == nil {
+		updated = order
+	}
+	resp := s.toResponse(updated)
+	return &resp, nil
+}
+
 func (s *OrderService) consumeFIFO(tx *gorm.DB, productID string, qty int) {
 	var batches []entity.StockBatch
 	tx.Where("product_id = ? AND quantity > 0", productID).Order("received_at ASC").Find(&batches)
@@ -1419,6 +1497,12 @@ func (s *OrderService) toResponse(o *entity.Order) dto.OrderResponse {
 		CreatedBy:          o.CreatedBy,
 		CreatedAt:          o.CreatedAt.Format(time.RFC3339),
 	}
+	if o.PaymentsEditedAt != nil {
+		s := o.PaymentsEditedAt.Format(time.RFC3339)
+		resp.PaymentsEditedAt = &s
+	}
+	resp.PaymentsEditedBy = o.PaymentsEditedBy
+	resp.PaymentsEditedReason = o.PaymentsEditedReason
 
 	if o.Member != nil {
 		resp.Member = &dto.OrderMemberInfo{

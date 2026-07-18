@@ -129,6 +129,25 @@ func (ctrl *OrderController) MarkAsPaid(c *fiber.Ctx) error {
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Order marked as paid", Body: resp})
 }
 
+// EditPayments — admin/superadmin ubah metode pembayaran order completed.
+// Skenario: kasir salah pilih Transfer padahal QRIS. Bu Santi 12 Jul 2026.
+func (ctrl *OrderController) EditPayments(c *fiber.Ctx) error {
+	id := c.Params("id")
+	var req dto.EditPaymentsRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(dto.ApiResponse{Code: fiber.ErrUnprocessableEntity.Code, Message: fiber.ErrUnprocessableEntity.Message, Error: err.Error()})
+	}
+	if err := util.ValidateRequest(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{Code: fiber.ErrBadRequest.Code, Message: fiber.ErrBadRequest.Message, Error: err})
+	}
+	claims := c.Locals("session").(*dto.JWTClaims)
+	resp, fail := ctrl.Service.EditPayments(id, req, claims.ID)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Payment method updated", Body: resp})
+}
+
 // CancelPending — cancel a pending order (stok tidak disentuh).
 func (ctrl *OrderController) CancelPending(c *fiber.Ctx) error {
 	id := c.Params("id")

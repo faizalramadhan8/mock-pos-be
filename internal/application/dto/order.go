@@ -117,6 +117,18 @@ type OrderResponse struct {
 	PointsEarned int `json:"points_earned,omitempty"`
 	CreatedBy    string `json:"created_by"`
 	CreatedAt    string `json:"created_at"`
+	// Payment edit audit (migration 000045). NULL = never edited.
+	PaymentsEditedAt     *string `json:"payments_edited_at,omitempty"`
+	PaymentsEditedBy     *string `json:"payments_edited_by,omitempty"`
+	PaymentsEditedReason *string `json:"payments_edited_reason,omitempty"`
+}
+
+// EditPaymentsRequest — admin/superadmin ubah metode pembayaran setelah
+// checkout. Sum(payments.amount) harus == order.total. Reason mandatory
+// untuk audit.
+type EditPaymentsRequest struct {
+	Payments []CreateOrderPaymentRequest `json:"payments" validate:"required,min=1,dive"`
+	Reason   string                      `json:"reason" validate:"required,min=3,max=500"`
 }
 
 type OrderPaymentResponse struct {

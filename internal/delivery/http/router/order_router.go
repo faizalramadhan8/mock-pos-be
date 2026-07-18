@@ -22,6 +22,8 @@ func UseOrderRouter(ctx context.Context, r fiber.Router) {
 	orders.Get("/:id", ctrl.GetByID)
 	orders.Post("/", auth.AllowCashier(), ctrl.Create)
 	orders.Patch("/:id/cancel", auth.AllowAdmins(), ctrl.Cancel)
+	// Ubah metode bayar order completed (admin/superadmin only). Bu Santi 12 Jul 2026.
+	orders.Patch("/:id/payments", auth.AllowAdmins(), ctrl.EditPayments)
 	orders.Post("/:id/send-wa", auth.AllowCashier(), ctrl.ResendWA)
 
 	// Pending order flow — kasir can create pending, mark paid, cancel, and

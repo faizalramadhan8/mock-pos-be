@@ -14,6 +14,11 @@ type Order struct {
 	PPN                float64        `gorm:"type:decimal(15,2);not null;default:0" json:"ppn"`
 	Total              float64        `gorm:"type:decimal(15,2);not null;default:0" json:"total"`
 	Payment            string         `gorm:"type:varchar(20);not null;default:'cash'" json:"payment"`
+	// Payment edit audit inline (migration 000045). Kalau NULL berarti order
+	// tidak pernah di-edit metode bayar-nya. Detail action tetap ke audit_log.
+	PaymentsEditedAt     *time.Time `gorm:"column:payments_edited_at;type:datetime;null" json:"payments_edited_at,omitempty"`
+	PaymentsEditedBy     *string    `gorm:"column:payments_edited_by;type:varchar(36);null" json:"payments_edited_by,omitempty"`
+	PaymentsEditedReason *string    `gorm:"column:payments_edited_reason;type:varchar(500);null" json:"payments_edited_reason,omitempty"`
 	Status             string         `gorm:"type:varchar(20);not null;default:'completed'" json:"status"`
 	Customer           string         `gorm:"type:varchar(200);null" json:"customer,omitempty"`
 	CustomerPhone      string         `gorm:"type:varchar(20);null" json:"customer_phone,omitempty"`
