@@ -156,6 +156,23 @@ func (s *OrderService) GetAll(status string, page, limit int) ([]dto.OrderRespon
 	return result, total, nil
 }
 
+// GetAllWithCursor — Path B pagination wrapper. Bu Santi 19 Jul 2026.
+func (s *OrderService) GetAllWithCursor(status, from, to, cursor, search string, limit int) ([]dto.OrderResponse, string, int64, *dto.ApiError) {
+	if limit <= 0 {
+		limit = 500
+	}
+	orders, nextCursor, total, err := s.Repo.FindAllWithCursor(status, from, to, cursor, search, limit)
+	if err != nil {
+		s.Log.Error().Err(err).Msg("Failed to fetch orders (cursor)")
+		return nil, "", 0, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to fetch orders"}
+	}
+	result := make([]dto.OrderResponse, 0, len(orders))
+	for _, o := range orders {
+		result = append(result, s.toResponse(&o))
+	}
+	return result, nextCursor, total, nil
+}
+
 func (s *OrderService) GetByID(id string) (*dto.OrderResponse, *dto.ApiError) {
 	order, err := s.Repo.FindByID(id)
 	if err != nil {
