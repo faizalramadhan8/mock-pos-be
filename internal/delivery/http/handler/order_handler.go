@@ -27,35 +27,12 @@ func NewOrderController(ctx context.Context) *OrderController {
 	}
 }
 
-// GetAll — enhanced dengan Path B pagination (Bu Santi 19 Jul 2026):
-//   ?status=       filter status (all|completed|pending|cancelled|refunded)
-//   ?from=YYYY-MM-DD?to=YYYY-MM-DD    date range filter (created_at)
-//   ?cursor=<ISO>  keyset pagination — get orders WHERE created_at < cursor
-//   ?limit=N       default 500 (max 2000)
-//   ?search=       substring match customer name / phone / order id
-//
-// Response.Meta:
-//   next_cursor: string — pass ke request berikutnya untuk load more (empty = habis)
-//   count: int — length dari body ini
-//   total: int64 — total matching records (kalau tanpa cursor, else -1)
-//
-// Backward compat: existing FE call tanpa cursor/from/to tetap works,
-// cuma dapet 500 recent (limit default). Path A compatibility.
 func (ctrl *OrderController) GetAll(c *fiber.Ctx) error {
 	status := c.Query("status", "")
-	from := c.Query("from", "")
-	to := c.Query("to", "")
-	cursor := c.Query("cursor", "")
-	search := c.Query("search", "")
-	limit, _ := strconv.Atoi(c.Query("limit", "500"))
-	if limit <= 0 {
-		limit = 500
-	}
-	if limit > 2000 {
-		limit = 2000
-	}
+	page, _ := strconv.Atoi(c.Query("page", "1"))
+	limit, _ := strconv.Atoi(c.Query("limit", "20"))
 
-	orders, nextCursor, total, fail := ctrl.Service.GetAllWithCursor(status, from, to, cursor, search, limit)
+	orders, total, fail := ctrl.Service.GetAll(status, page, limit)
 	if fail != nil {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
 	}
@@ -65,10 +42,9 @@ func (ctrl *OrderController) GetAll(c *fiber.Ctx) error {
 		Message: "successfully",
 		Body:    orders,
 		Meta: map[string]interface{}{
-			"total":       total,
-			"count":       len(orders),
-			"limit":       limit,
-			"next_cursor": nextCursor,
+			"total": total,
+			"page":  page,
+			"limit": limit,
 		},
 	})
 }
