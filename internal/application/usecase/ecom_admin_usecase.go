@@ -1,0 +1,191 @@
+package usecase
+
+import (
+	"context"
+	"time"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/faizalramadhan/pos-be/internal/application/dto"
+	"github.com/faizalramadhan/pos-be/internal/domain/entity"
+	"github.com/faizalramadhan/pos-be/internal/domain/enum"
+	"github.com/rs/zerolog"
+	"gorm.io/gorm"
+)
+
+// EcomAdminService — usecase untuk admin panel ecom. Strict separation:
+// TIDAK sentuh field POS (stock, selling_price, member_price, name, dst).
+// Cegah admin ecom accidentally break POS pricing. Bu Santi 20 Jul 2026.
+type EcomAdminService struct {
+	DB  *gorm.DB
+	Log *zerolog.Logger
+}
+
+func NewEcomAdminService(ctx context.Context, db *gorm.DB) *EcomAdminService {
+	logger := ctx.Value(enum.LoggerCtxKey).(*zerolog.Logger)
+	return &EcomAdminService{DB: db, Log: logger}
+}
+
+// ListProducts — cursor pagination by created_at DESC. Search LIKE match ke
+// name / sku. Return SEMUA produk (termasuk yang stock_ecom=0 atau
+// ecom_is_available=FALSE) supaya admin bisa toggle publish + set stok.
+func (s *EcomAdminService) ListProducts(search, cursor string, limit int) ([]dto.EcomAdminProductResponse, string, *dto.ApiError) {
+	var products []entity.Product
+
+	q := s.DB.Model(&entity.Product{}).Where("deleted_at IS NULL")
+
+	if search != "" {
+		like := "%" + search + "%"
+		q = q.Where("name LIKE ? OR name_id LIKE ? OR sku LIKE ?", like, like, like)
+	}
+
+	if cursor != "" {
+		if t, err := time.Parse(time.RFC3339, cursor); err == nil {
+			q = q.Where("created_at < ?", t)
+		}
+	}
+
+	if err := q.Order("created_at DESC").Limit(limit).Find(&products).Error; err != nil {
+		s.Log.Error().Err(err).Msg("Failed to list ecom products")
+		return nil, "", &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to fetch products"}
+	}
+
+	items := make([]dto.EcomAdminProductResponse, 0, len(products))
+	for i := range products {
+		items = append(items, toEcomAdminProductResponse(&products[i]))
+	}
+
+	nextCursor := ""
+	if len(products) == limit && limit > 0 {
+		nextCursor = products[len(products)-1].CreatedAt.Format(time.RFC3339)
+	}
+
+	return items, nextCursor, nil
+}
+
+// GetProduct — detail single untuk admin edit page.
+func (s *EcomAdminService) GetProduct(id string) (*dto.EcomAdminProductResponse, *dto.ApiError) {
+	var product entity.Product
+	if err := s.DB.Where("id = ? AND deleted_at IS NULL", id).First(&product).Error; err != nil {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Product not found"}
+	}
+	resp := toEcomAdminProductResponse(&product)
+	return &resp, nil
+}
+
+// UpdateEcomFields — patch HANYA field ecom_*. Pakai gorm.DB.Model().Updates()
+// dengan struct field explicit supaya kolom POS tidak ke-touch. Cegah GORM
+// zero-value overwrite (Updates dengan struct skip zero values by default).
+func (s *EcomAdminService) UpdateEcomFields(id string, req dto.EcomFieldsUpdateRequest, changedBy string) (*dto.EcomAdminProductResponse, *dto.ApiError) {
+	var product entity.Product
+	if err := s.DB.Where("id = ? AND deleted_at IS NULL", id).First(&product).Error; err != nil {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Product not found"}
+	}
+
+	// Build updates map — hanya kolom ecom_* + stock_ecom.
+	// Pakai map (bukan struct) supaya explicit control tiap kolom + support
+	// setNULL untuk pointer field (kalau user kosongkan input).
+	updates := map[string]interface{}{}
+
+	if req.StockEcom != nil {
+		if *req.StockEcom < 0 {
+			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Stok online tidak boleh negatif"}
+		}
+		updates["stock_ecom"] = *req.StockEcom
+	}
+	if req.EcomIsAvailable != nil {
+		updates["ecom_is_available"] = *req.EcomIsAvailable
+	}
+	if req.EcomPrice != nil {
+		if req.EcomPrice.Null {
+			updates["ecom_price"] = nil
+		} else {
+			if req.EcomPrice.Value < 0 {
+				return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Harga online tidak boleh negatif"}
+			}
+			updates["ecom_price"] = req.EcomPrice.Value
+		}
+	}
+	if req.EcomMemberPrice != nil {
+		if req.EcomMemberPrice.Null {
+			updates["ecom_member_price"] = nil
+		} else {
+			if req.EcomMemberPrice.Value < 0 {
+				return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Harga member online tidak boleh negatif"}
+			}
+			updates["ecom_member_price"] = req.EcomMemberPrice.Value
+		}
+	}
+	if req.EcomWeightGrams != nil {
+		if req.EcomWeightGrams.Null {
+			updates["ecom_weight_grams"] = nil
+		} else {
+			if req.EcomWeightGrams.Value < 0 {
+				return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Berat tidak boleh negatif"}
+			}
+			updates["ecom_weight_grams"] = req.EcomWeightGrams.Value
+		}
+	}
+	if req.EcomMinOrder != nil {
+		if *req.EcomMinOrder < 1 {
+			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Min order minimal 1"}
+		}
+		updates["ecom_min_order"] = *req.EcomMinOrder
+	}
+	if req.EcomDescription != nil {
+		if req.EcomDescription.Null {
+			updates["ecom_description"] = nil
+		} else {
+			updates["ecom_description"] = req.EcomDescription.Value
+		}
+	}
+
+	if len(updates) == 0 {
+		// No changes — return current state.
+		resp := toEcomAdminProductResponse(&product)
+		return &resp, nil
+	}
+
+	updates["updated_at"] = time.Now()
+
+	if err := s.DB.Model(&entity.Product{}).Where("id = ?", id).Updates(updates).Error; err != nil {
+		s.Log.Error().Err(err).Str("product_id", id).Msg("Failed to update ecom fields")
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to save"}
+	}
+
+	// Log audit — best-effort, tidak block success response.
+	s.Log.Info().
+		Str("product_id", id).
+		Str("changed_by", changedBy).
+		Interface("changes", updates).
+		Msg("ecom fields updated")
+
+	// Re-fetch to return latest state.
+	var updated entity.Product
+	if err := s.DB.Where("id = ?", id).First(&updated).Error; err != nil {
+		// Fallback ke pre-update copy — rare edge case.
+		resp := toEcomAdminProductResponse(&product)
+		return &resp, nil
+	}
+	resp := toEcomAdminProductResponse(&updated)
+	return &resp, nil
+}
+
+func toEcomAdminProductResponse(p *entity.Product) dto.EcomAdminProductResponse {
+	return dto.EcomAdminProductResponse{
+		ID:                p.ID,
+		Name:              p.Name,
+		NameID:            p.NameID,
+		SKU:               p.SKU,
+		StockPOS:          p.Stock,
+		SellingPrice:      p.SellingPrice,
+		MemberPrice:       p.MemberPrice,
+		StockEcom:         p.StockEcom,
+		EcomPrice:         p.EcomPrice,
+		EcomMemberPrice:   p.EcomMemberPrice,
+		EcomIsAvailable:   p.EcomIsAvailable,
+		EcomDescription:   p.EcomDescription,
+		EcomWeightGrams:   p.EcomWeightGrams,
+		EcomMinOrder:      p.EcomMinOrder,
+		Image:             p.Image,
+	}
+}

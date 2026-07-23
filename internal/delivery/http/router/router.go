@@ -60,4 +60,8 @@ func UseRouter(ctx context.Context, r fiber.Router) {
 
 	// Capital Injections (Setoran Modal Owner — IN ke kas di luar penjualan)
 	UseCapitalRouter(ctx, prefix)
+
+	// E-commerce Admin (Bu Santi 20 Jul 2026) — panel manage produk online,
+	// order online, dst. Terpisah scope dari POS staff.
+	UseEcomAdminRouter(ctx, prefix)
 }

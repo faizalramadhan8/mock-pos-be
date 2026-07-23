@@ -136,3 +136,13 @@ func (m RBACMiddleware) AllowCashier() fiber.Handler {
 		string(enum.RoleCashier),
 	})
 }
+
+// AllowEcomAdmins — ecom admin scope. superadmin (yang bisa akses semua) juga
+// masuk. Cegah kasir/staff toko akses ecom endpoints. Bu Santi 20 Jul 2026.
+func (m RBACMiddleware) AllowEcomAdmins() fiber.Handler {
+	return m.allowRole([]string{
+		string(enum.RoleSuperAdmin),
+		string(enum.RoleEcomSuperAdmin),
+		string(enum.RoleEcomAdmin),
+	})
+}

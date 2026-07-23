@@ -43,6 +43,17 @@ type Product struct {
 	// via halaman "Katalog Tebus Poin" di Stok. Default FALSE — semua
 	// produk existing tidak eligible sampai di-curate.
 	IsRedeemable  bool           `gorm:"column:is_redeemable;type:tinyint(1);not null;default:0" json:"is_redeemable"`
+	// E-commerce fields (migration 000047, Bu Santi 20 Jul 2026).
+	// Channel separation dengan POS: stok dan harga BEDA. NULL price = fallback
+	// ke selling_price/member_price. ecom_is_available = flag publish visible
+	// di storefront (dan effective TRUE cuma kalau stock_ecom > 0).
+	StockEcom       int      `gorm:"column:stock_ecom;type:int;not null;default:0" json:"stock_ecom"`
+	EcomPrice       *float64 `gorm:"column:ecom_price;type:decimal(15,2);null" json:"ecom_price,omitempty"`
+	EcomMemberPrice *float64 `gorm:"column:ecom_member_price;type:decimal(15,2);null" json:"ecom_member_price,omitempty"`
+	EcomIsAvailable bool     `gorm:"column:ecom_is_available;type:tinyint(1);not null;default:1" json:"ecom_is_available"`
+	EcomDescription *string  `gorm:"column:ecom_description;type:text;null" json:"ecom_description,omitempty"`
+	EcomWeightGrams *int     `gorm:"column:ecom_weight_grams;type:int;null" json:"ecom_weight_grams,omitempty"`
+	EcomMinOrder    int      `gorm:"column:ecom_min_order;type:int;not null;default:1" json:"ecom_min_order"`
 	CreatedAt     time.Time      `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
 	UpdatedAt     time.Time      `gorm:"default:current_timestamp()" json:"updated_at,omitempty"`
 	DeletedAt     gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
