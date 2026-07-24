@@ -121,6 +121,8 @@ type OrderResponse struct {
 	PaymentsEditedAt     *string `json:"payments_edited_at,omitempty"`
 	PaymentsEditedBy     *string `json:"payments_edited_by,omitempty"`
 	PaymentsEditedReason *string `json:"payments_edited_reason,omitempty"`
+	// Order source (migration 000047): 'pos' | 'ecom'. Default 'pos'.
+	OrderSource string `json:"order_source,omitempty"`
 }
 
 // EditPaymentsRequest — admin/superadmin ubah metode pembayaran setelah

@@ -38,6 +38,23 @@ type Config struct {
 	WahaSession      string `koanf:"WAHA_SESSION"`
 	WAReceiptEnabled bool   `koanf:"WA_RECEIPT_ENABLED"`
 
+	// E-commerce Fase 3 integrations (Bu Santi 24 Jul 2026).
+	// Semua optional — kalau kosong, fallback ke stub/manual mode.
+	MidtransServerKey string `koanf:"MIDTRANS_SERVER_KEY"` // API key untuk create Snap token
+	MidtransClientKey string `koanf:"MIDTRANS_CLIENT_KEY"` // untuk FE Snap.js
+	MidtransIsProd    bool   `koanf:"MIDTRANS_IS_PROD"`    // false = sandbox
+
+	BiteshipAPIKey     string `koanf:"BITESHIP_API_KEY"`
+	BiteshipOriginArea string `koanf:"BITESHIP_ORIGIN_AREA_ID"` // area ID toko Bu Santi
+	// Fallback selain area_id — Biteship API accept postal_code juga
+	// (docs: https://biteship.com/id/docs/api/rates). Kalau area_id kosong
+	// tapi postal_code di-set, request tetap jalan.
+	BiteshipOriginPostal string `koanf:"BITESHIP_ORIGIN_POSTAL_CODE"`
+	BiteshipCouriers     string `koanf:"BITESHIP_COURIERS"` // comma-separated; default "jne,jnt,sicepat,anteraja"
+
+	// Fallback shipping stub (kalau BITESHIP_API_KEY kosong).
+	// Rate per kg flat untuk MVP validate demand.
+	ShippingFlatBaseRate int `koanf:"SHIPPING_FLAT_BASE_RATE"` // default 15000
 }
 
 func (c *Config) GetGormAddress() string {

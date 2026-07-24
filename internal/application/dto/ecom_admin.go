@@ -24,6 +24,9 @@ type EcomAdminProductResponse struct {
 	EcomMemberPrice *float64 `json:"ecom_member_price"`
 	EcomIsAvailable bool     `json:"ecom_is_available"`
 	EcomDescription *string  `json:"ecom_description"`
+	EcomImage       *string  `json:"ecom_image"`
+	EcomCategoryID  *string  `json:"ecom_category_id"`
+	EcomCategoryName string  `json:"ecom_category_name,omitempty"`
 	EcomWeightGrams *int     `json:"ecom_weight_grams"`
 	EcomMinOrder    int      `json:"ecom_min_order"`
 }
@@ -72,6 +75,16 @@ func (n *NullableString) UnmarshalJSON(data []byte) error {
 	return json.Unmarshal(data, &n.Value)
 }
 
+// EcomCategoryRequest — CRUD payload untuk admin. Response tipe di
+// ecom_public.go (dipakai bareng admin + public).
+type EcomCategoryRequest struct {
+	Name      string `json:"name"`
+	NameID    string `json:"name_id"`
+	IconName  string `json:"icon_name"`
+	SortOrder int    `json:"sort_order"`
+	IsActive  *bool  `json:"is_active,omitempty"`
+}
+
 // EcomFieldsUpdateRequest — PATCH payload. Semua field pointer supaya
 // FE bisa partial update. NullableX untuk distinguish "clear ke NULL" vs
 // "tidak update".
@@ -81,6 +94,8 @@ type EcomFieldsUpdateRequest struct {
 	EcomMemberPrice *NullableFloat  `json:"ecom_member_price,omitempty"`
 	EcomIsAvailable *bool           `json:"ecom_is_available,omitempty"`
 	EcomDescription *NullableString `json:"ecom_description,omitempty"`
+	EcomImage       *NullableString `json:"ecom_image,omitempty"`
+	EcomCategoryID  *NullableString `json:"ecom_category_id,omitempty"`
 	EcomWeightGrams *NullableInt    `json:"ecom_weight_grams,omitempty"`
 	EcomMinOrder    *int            `json:"ecom_min_order,omitempty"`
 }

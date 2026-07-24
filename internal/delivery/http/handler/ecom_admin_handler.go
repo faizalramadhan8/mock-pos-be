@@ -18,18 +18,20 @@ import (
 // POS field (stock, selling_price) tetap dikelola di POS Inventory —
 // strict separation per keputusan Bu Santi 20 Jul 2026.
 type EcomAdminController struct {
-	Log          *zerolog.Logger
-	AuthService  *usecase.AuthService
-	EcomAdminSvc *usecase.EcomAdminService
+	Log             *zerolog.Logger
+	AuthService     *usecase.AuthService
+	EcomAdminSvc    *usecase.EcomAdminService
+	EcomCategorySvc *usecase.EcomCategoryService
 }
 
 func NewEcomAdminController(ctx context.Context) *EcomAdminController {
 	logger := ctx.Value(enum.LoggerCtxKey).(*zerolog.Logger)
 	db := ctx.Value(enum.GormCtxKey).(*gorm.DB)
 	return &EcomAdminController{
-		Log:          logger,
-		AuthService:  usecase.NewAuthService(ctx, db),
-		EcomAdminSvc: usecase.NewEcomAdminService(ctx, db),
+		Log:             logger,
+		AuthService:     usecase.NewAuthService(ctx, db),
+		EcomAdminSvc:    usecase.NewEcomAdminService(ctx, db),
+		EcomCategorySvc: usecase.NewEcomCategoryService(ctx, db),
 	}
 }
 
@@ -131,4 +133,59 @@ func (ctrl *EcomAdminController) UpdateEcomFields(c *fiber.Ctx) error {
 		})
 	}
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Product ecom fields updated", Body: resp})
+}
+
+// ─── Ecom Categories CRUD ────────────────────────────────────────────
+
+func (ctrl *EcomAdminController) ListCategories(c *fiber.Ctx) error {
+	items, fail := ctrl.EcomCategorySvc.List(false)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
+			Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message,
+		})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK", Body: items})
+}
+
+func (ctrl *EcomAdminController) CreateCategory(c *fiber.Ctx) error {
+	var req dto.EcomCategoryRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(dto.ApiResponse{
+			Code: fiber.ErrUnprocessableEntity.Code, Message: "Invalid body", Error: err.Error(),
+		})
+	}
+	resp, fail := ctrl.EcomCategorySvc.Create(req)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
+			Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message,
+		})
+	}
+	return c.Status(fiber.StatusCreated).JSON(dto.ApiResponse{Code: fiber.StatusCreated, Message: "Category created", Body: resp})
+}
+
+func (ctrl *EcomAdminController) UpdateCategory(c *fiber.Ctx) error {
+	id := c.Params("id")
+	var req dto.EcomCategoryRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(dto.ApiResponse{
+			Code: fiber.ErrUnprocessableEntity.Code, Message: "Invalid body", Error: err.Error(),
+		})
+	}
+	resp, fail := ctrl.EcomCategorySvc.Update(id, req)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
+			Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message,
+		})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Category updated", Body: resp})
+}
+
+func (ctrl *EcomAdminController) DeleteCategory(c *fiber.Ctx) error {
+	id := c.Params("id")
+	if fail := ctrl.EcomCategorySvc.Delete(id); fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
+			Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message,
+		})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Category deleted"})
 }

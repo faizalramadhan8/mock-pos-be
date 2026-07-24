@@ -20,6 +20,22 @@ type Category struct {
 
 func (Category) TableName() string { return "categories" }
 
+// EcomCategory — kategori khusus storefront ecom, terpisah dari POS Category.
+// Admin ecom curate independen. Migration 000053, Bu Santi 24 Jul 2026.
+type EcomCategory struct {
+	ID        string         `gorm:"type:varchar(36);primary_key;not null" json:"id"`
+	Name      string         `gorm:"type:varchar(200);not null" json:"name"`
+	NameID    string         `gorm:"column:name_id;type:varchar(200);null" json:"name_id"`
+	IconName  string         `gorm:"column:icon_name;type:varchar(50);null" json:"icon_name,omitempty"`
+	SortOrder int            `gorm:"column:sort_order;type:int;not null;default:0" json:"sort_order"`
+	IsActive  bool           `gorm:"column:is_active;type:tinyint(1);not null;default:1" json:"is_active"`
+	CreatedAt time.Time      `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
+	UpdatedAt time.Time      `gorm:"default:current_timestamp()" json:"updated_at,omitempty"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
+}
+
+func (EcomCategory) TableName() string { return "ecom_categories" }
+
 type Product struct {
 	ID            string         `gorm:"type:varchar(36);primary_key;not null" json:"id"`
 	SKU           string         `gorm:"type:varchar(50);not null;uniqueIndex" json:"sku"`
@@ -52,6 +68,9 @@ type Product struct {
 	EcomMemberPrice *float64 `gorm:"column:ecom_member_price;type:decimal(15,2);null" json:"ecom_member_price,omitempty"`
 	EcomIsAvailable bool     `gorm:"column:ecom_is_available;type:tinyint(1);not null;default:1" json:"ecom_is_available"`
 	EcomDescription *string  `gorm:"column:ecom_description;type:text;null" json:"ecom_description,omitempty"`
+	EcomImage       *string  `gorm:"column:ecom_image;type:varchar(500);null" json:"ecom_image,omitempty"`
+	EcomCategoryID  *string       `gorm:"column:ecom_category_id;type:varchar(36);null" json:"ecom_category_id,omitempty"`
+	EcomCategory    *EcomCategory `gorm:"foreignKey:EcomCategoryID" json:"ecom_category,omitempty"`
 	EcomWeightGrams *int     `gorm:"column:ecom_weight_grams;type:int;null" json:"ecom_weight_grams,omitempty"`
 	EcomMinOrder    int      `gorm:"column:ecom_min_order;type:int;not null;default:1" json:"ecom_min_order"`
 	CreatedAt     time.Time      `gorm:"default:current_timestamp()" json:"created_at,omitempty"`

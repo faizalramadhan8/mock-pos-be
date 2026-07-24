@@ -25,29 +25,30 @@ func NewEcomPublicService(ctx context.Context, db *gorm.DB) *EcomPublicService {
 	return &EcomPublicService{DB: db, Log: logger}
 }
 
-// ListCategories — kategori yang punya minimal 1 produk ecom active.
+// ListCategories — kategori ecom (bukan POS) yang aktif + punya minimal 1
+// produk siap tayang. Migration 000053 pisahkan taxonomy ecom dari POS.
 func (s *EcomPublicService) ListCategories() ([]dto.EcomCategoryResponse, *dto.ApiError) {
-	// Subquery count produk per kategori yang tayang di ecom.
 	rows := []struct {
 		ID           string
 		Name         string
 		NameID       string
-		Icon         string
-		Color        string
+		IconName    string
+		SortOrder    int
+		IsActive     bool
 		ProductCount int
 	}{}
 
-	err := s.DB.Table("categories c").
-		Select(`c.id, c.name, c.name_id, c.icon, c.color,
+	err := s.DB.Table("ecom_categories c").
+		Select(`c.id, c.name, c.name_id, c.icon_name, c.sort_order, c.is_active,
 			COALESCE((SELECT COUNT(*) FROM products p
-				WHERE p.category_id = c.id
+				WHERE p.ecom_category_id = c.id
 					AND p.deleted_at IS NULL
 					AND p.is_active = 1
 					AND p.ecom_is_available = 1
 					AND p.stock_ecom > 0), 0) AS product_count`).
-		Where("c.deleted_at IS NULL").
+		Where("c.deleted_at IS NULL AND c.is_active = 1").
 		Having("product_count > 0").
-		Order("c.name ASC").
+		Order("c.sort_order ASC, c.name ASC").
 		Scan(&rows).Error
 	if err != nil {
 		s.Log.Error().Err(err).Msg("Failed to list ecom categories")
@@ -60,8 +61,9 @@ func (s *EcomPublicService) ListCategories() ([]dto.EcomCategoryResponse, *dto.A
 			ID:           r.ID,
 			Name:         r.Name,
 			NameID:       r.NameID,
-			Icon:         r.Icon,
-			Color:        r.Color,
+			IconName:    r.IconName,
+			SortOrder:    r.SortOrder,
+			IsActive:     r.IsActive,
 			ProductCount: r.ProductCount,
 		})
 	}
@@ -77,7 +79,7 @@ func (s *EcomPublicService) ListProducts(categoryID, search, sort, cursor string
 		Where("deleted_at IS NULL AND is_active = 1 AND ecom_is_available = 1 AND stock_ecom > 0")
 
 	if categoryID != "" {
-		q = q.Where("category_id = ?", categoryID)
+		q = q.Where("ecom_category_id = ?", categoryID)
 	}
 	if search != "" {
 		like := "%" + search + "%"
@@ -105,7 +107,7 @@ func (s *EcomPublicService) ListProducts(categoryID, search, sort, cursor string
 		}
 	}
 
-	if err := q.Preload("Category").
+	if err := q.Preload("EcomCategory").Preload("Category").
 		Order(orderClause).
 		Limit(limit).
 		Find(&products).Error; err != nil {
@@ -132,7 +134,7 @@ func (s *EcomPublicService) ListProducts(categoryID, search, sort, cursor string
 // GetProduct — detail full untuk PDP. Include description + tiers.
 func (s *EcomPublicService) GetProduct(id string) (*dto.EcomProductDetail, *dto.ApiError) {
 	var product entity.Product
-	err := s.DB.Preload("Category").
+	err := s.DB.Preload("EcomCategory").Preload("Category").
 		Where("id = ? AND deleted_at IS NULL AND is_active = 1 AND ecom_is_available = 1 AND stock_ecom > 0", id).
 		First(&product).Error
 	if err != nil {
@@ -177,21 +179,36 @@ func toEcomListItem(p *entity.Product) dto.EcomProductListItem {
 	} else if p.MemberPrice != nil {
 		memberPrice = p.MemberPrice
 	}
+	// Ecom category dulu; fallback ke POS Category kalau produk belum di-tag
+	// ecom_category (mis. produk lama sebelum migration).
 	catName := ""
-	if p.Category != nil {
+	catID := ""
+	if p.EcomCategory != nil {
+		catID = p.EcomCategory.ID
+		catName = p.EcomCategory.NameID
+		if catName == "" {
+			catName = p.EcomCategory.Name
+		}
+	} else if p.Category != nil {
+		catID = p.Category.ID
 		catName = p.Category.NameID
 		if catName == "" {
 			catName = p.Category.Name
 		}
+	}
+	// ecom_image override kalau di-set, else fallback ke image POS.
+	image := p.Image
+	if p.EcomImage != nil && *p.EcomImage != "" {
+		image = *p.EcomImage
 	}
 	return dto.EcomProductListItem{
 		ID:           p.ID,
 		Name:         p.Name,
 		NameID:       p.NameID,
 		SKU:          p.SKU,
-		CategoryID:   p.CategoryID,
+		CategoryID:   catID,
 		CategoryName: catName,
-		Image:        p.Image,
+		Image:        image,
 		Price:        price,
 		MemberPrice:  memberPrice,
 		Stock:        p.StockEcom,

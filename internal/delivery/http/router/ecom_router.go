@@ -29,6 +29,11 @@ func UseEcomAdminRouter(ctx context.Context, r fiber.Router) {
 	gated.Get("/products", ctrl.ListProducts)
 	gated.Get("/products/:id", ctrl.GetProduct)
 	gated.Patch("/products/:id/ecom-fields", ctrl.UpdateEcomFields)
+	// Ecom categories CRUD (terpisah dari POS categories).
+	gated.Get("/categories", ctrl.ListCategories)
+	gated.Post("/categories", ctrl.CreateCategory)
+	gated.Put("/categories/:id", ctrl.UpdateCategory)
+	gated.Delete("/categories/:id", ctrl.DeleteCategory)
 }
 
 // UseEcomPublicRouter — public storefront endpoints (no auth). Customer
@@ -48,6 +53,8 @@ func UseEcomCustomerRouter(ctx context.Context, r fiber.Router) {
 	auth := middleware.NewRBACMiddleware(configs.JwtSecret, configs.JwtAccessTokenExpiresIn)
 	cartCtrl := handler.NewEcomCartController(ctx)
 	addrCtrl := handler.NewEcomAddressController(ctx)
+	checkoutCtrl := handler.NewEcomCheckoutController(ctx)
+	ordersCtrl := handler.NewEcomOrdersController(ctx)
 
 	g := r.Group("/ecom", auth.AllowEcomCustomer())
 	// Cart
@@ -60,4 +67,14 @@ func UseEcomCustomerRouter(ctx context.Context, r fiber.Router) {
 	g.Post("/addresses", addrCtrl.Create)
 	g.Put("/addresses/:id", addrCtrl.Update)
 	g.Delete("/addresses/:id", addrCtrl.Delete)
+	// Checkout
+	g.Post("/shipping/rates", checkoutCtrl.ShippingRates)
+	g.Post("/checkout/create-order", checkoutCtrl.CreateOrder)
+	// Customer own orders
+	g.Get("/orders", ordersCtrl.List)
+	g.Get("/orders/:id", ordersCtrl.GetDetail)
+
+	// Midtrans webhook — PUBLIC (Midtrans server hits this, no JWT).
+	// Mounted di r (root) — bukan grup /ecom gated.
+	r.Post("/ecom/payments/webhook/midtrans", checkoutCtrl.MidtransWebhook)
 }

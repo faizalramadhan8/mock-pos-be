@@ -1503,6 +1503,7 @@ func (s *OrderService) toResponse(o *entity.Order) dto.OrderResponse {
 	}
 	resp.PaymentsEditedBy = o.PaymentsEditedBy
 	resp.PaymentsEditedReason = o.PaymentsEditedReason
+	resp.OrderSource = o.OrderSource
 
 	if o.Member != nil {
 		resp.Member = &dto.OrderMemberInfo{

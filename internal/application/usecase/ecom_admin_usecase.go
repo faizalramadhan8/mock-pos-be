@@ -65,7 +65,7 @@ func (s *EcomAdminService) ListProducts(search, cursor string, limit int) ([]dto
 // GetProduct — detail single untuk admin edit page.
 func (s *EcomAdminService) GetProduct(id string) (*dto.EcomAdminProductResponse, *dto.ApiError) {
 	var product entity.Product
-	if err := s.DB.Where("id = ? AND deleted_at IS NULL", id).First(&product).Error; err != nil {
+	if err := s.DB.Preload("EcomCategory").Where("id = ? AND deleted_at IS NULL", id).First(&product).Error; err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Product not found"}
 	}
 	resp := toEcomAdminProductResponse(&product)
@@ -138,6 +138,26 @@ func (s *EcomAdminService) UpdateEcomFields(id string, req dto.EcomFieldsUpdateR
 			updates["ecom_description"] = req.EcomDescription.Value
 		}
 	}
+	if req.EcomImage != nil {
+		if req.EcomImage.Null {
+			updates["ecom_image"] = nil
+		} else {
+			updates["ecom_image"] = req.EcomImage.Value
+		}
+	}
+	if req.EcomCategoryID != nil {
+		if req.EcomCategoryID.Null || req.EcomCategoryID.Value == "" {
+			updates["ecom_category_id"] = nil
+		} else {
+			// Validate exists — cegah FK violation dari FE bug.
+			var count int64
+			s.DB.Model(&entity.EcomCategory{}).Where("id = ? AND deleted_at IS NULL", req.EcomCategoryID.Value).Count(&count)
+			if count == 0 {
+				return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Kategori ecom tidak ditemukan"}
+			}
+			updates["ecom_category_id"] = req.EcomCategoryID.Value
+		}
+	}
 
 	if len(updates) == 0 {
 		// No changes — return current state.
@@ -161,7 +181,7 @@ func (s *EcomAdminService) UpdateEcomFields(id string, req dto.EcomFieldsUpdateR
 
 	// Re-fetch to return latest state.
 	var updated entity.Product
-	if err := s.DB.Where("id = ?", id).First(&updated).Error; err != nil {
+	if err := s.DB.Preload("EcomCategory").Where("id = ?", id).First(&updated).Error; err != nil {
 		// Fallback ke pre-update copy — rare edge case.
 		resp := toEcomAdminProductResponse(&product)
 		return &resp, nil
@@ -171,6 +191,14 @@ func (s *EcomAdminService) UpdateEcomFields(id string, req dto.EcomFieldsUpdateR
 }
 
 func toEcomAdminProductResponse(p *entity.Product) dto.EcomAdminProductResponse {
+	catName := ""
+	if p.EcomCategory != nil {
+		if p.EcomCategory.NameID != "" {
+			catName = p.EcomCategory.NameID
+		} else {
+			catName = p.EcomCategory.Name
+		}
+	}
 	return dto.EcomAdminProductResponse{
 		ID:                p.ID,
 		Name:              p.Name,
@@ -184,6 +212,9 @@ func toEcomAdminProductResponse(p *entity.Product) dto.EcomAdminProductResponse 
 		EcomMemberPrice:   p.EcomMemberPrice,
 		EcomIsAvailable:   p.EcomIsAvailable,
 		EcomDescription:   p.EcomDescription,
+		EcomImage:         p.EcomImage,
+		EcomCategoryID:    p.EcomCategoryID,
+		EcomCategoryName:  catName,
 		EcomWeightGrams:   p.EcomWeightGrams,
 		EcomMinOrder:      p.EcomMinOrder,
 		Image:             p.Image,

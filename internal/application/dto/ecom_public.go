@@ -1,13 +1,16 @@
 package dto
 
-// EcomCategoryResponse — kategori untuk storefront browse. Cuma kategori yang
-// punya produk aktif ecom.
+// EcomCategoryResponse — kategori untuk storefront browse + admin list.
+// Migration 000053: switched dari POS categories ke ecom_categories terpisah.
+// icon_name = kolom di DB. sort_order dari admin. is_active = admin toggle.
+// ProductCount: admin scope = semua produk ter-link, public = filter eligible.
 type EcomCategoryResponse struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
 	NameID       string `json:"name_id"`
-	Icon         string `json:"icon,omitempty"`
-	Color        string `json:"color,omitempty"`
+	IconName     string `json:"icon_name,omitempty"`
+	SortOrder    int    `json:"sort_order"`
+	IsActive     bool   `json:"is_active"`
 	ProductCount int    `json:"product_count"`
 }
 
