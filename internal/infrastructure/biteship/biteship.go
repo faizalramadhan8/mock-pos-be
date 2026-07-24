@@ -3,8 +3,8 @@ package biteship
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 )
@@ -133,7 +133,11 @@ func (c *Client) GetRates(req RateRequest) ([]Rate, error) {
 
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("biteship error (%d): %s", resp.StatusCode, string(respBody))
+		// Biteship reject request (400 area/postal invalid, 401 key salah,
+		// 429 rate limit, 5xx down). Jangan fail checkout — fallback stub +
+		// log detail supaya operator bisa debug.
+		log.Printf("biteship rates error (%d): %s", resp.StatusCode, string(respBody))
+		return c.stubRates(req.TotalWeightGrams), nil
 	}
 
 	var raw struct {
@@ -148,7 +152,8 @@ func (c *Client) GetRates(req RateRequest) ([]Rate, error) {
 		} `json:"pricing"`
 	}
 	if err := json.Unmarshal(respBody, &raw); err != nil {
-		return nil, err
+		log.Printf("biteship rates decode error: %v", err)
+		return c.stubRates(req.TotalWeightGrams), nil
 	}
 	rates := make([]Rate, 0, len(raw.Pricing))
 	for _, p := range raw.Pricing {
