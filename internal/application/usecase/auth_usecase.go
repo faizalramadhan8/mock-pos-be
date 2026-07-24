@@ -44,6 +44,70 @@ func NewAuthService(ctx context.Context, db *gorm.DB) *AuthService {
 	}
 }
 
+// RegisterCustomer — public register untuk customer ecom (Bu Santi 21 Jul 2026).
+// Force role='user' (ignore req.role kalau ada). Auto-login setelah register:
+// return LoginResponse dengan JWT langsung supaya FE bisa redirect ke storefront
+// tanpa 2nd request.
+func (s *AuthService) RegisterCustomer(req dto.CustomerRegisterRequest) (*dto.LoginResponse, *dto.ApiError) {
+	// Email + phone dedup check.
+	exists, err := s.Repo.ExistsByEmail(req.Email)
+	if err != nil {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to check email"}
+	}
+	if exists {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrConflict, Message: "Email sudah terdaftar"}
+	}
+	if req.PhoneNumber != "" {
+		exists, err = s.Repo.ExistsByPhone(req.PhoneNumber)
+		if err != nil {
+			return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to check phone"}
+		}
+		if exists {
+			return nil, &dto.ApiError{StatusCode: fiber.ErrConflict, Message: "Nomor HP sudah terdaftar"}
+		}
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to hash password"}
+	}
+
+	user := &entity.User{
+		ID:          uuid.New().String(),
+		Email:       req.Email,
+		FullName:    req.FullName,
+		PhoneNumber: req.PhoneNumber,
+		Password:    string(hashedPassword),
+		Role:        enum.RoleUser, // hardcode 'user' — cegah escalation via public endpoint
+		IsActive:    true,
+	}
+
+	if err := s.Repo.Create(user); err != nil {
+		s.Log.Error().Err(err).Msg("RegisterCustomer create failed")
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to create user"}
+	}
+
+	// Issue JWT langsung (auto-login).
+	claims := &dto.JWTClaims{
+		ID: user.ID, Email: user.Email, Fullname: user.FullName,
+		Phone: user.PhoneNumber, Role: string(user.Role), Session: user.ID,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: &jwt.NumericDate{Time: time.Now().Add(s.Configs.JwtAccessTokenExpiresIn)},
+			IssuedAt:  &jwt.NumericDate{Time: time.Now()},
+		},
+	}
+	accessToken, err := util.MarshalClaims(s.Configs.JwtSecret, claims)
+	if err != nil {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: err.Error()}
+	}
+
+	return &dto.LoginResponse{
+		AccessToken: accessToken.TokenString,
+		ExpiresIn:   int64(s.Configs.JwtAccessTokenExpiresIn.Seconds()),
+		User:        s.toUserResponse(user),
+	}, nil
+}
+
 func (s *AuthService) Register(req dto.RegisterRequest) (*dto.RegisterResponse, *dto.ApiError) {
 	exists, err := s.Repo.ExistsByEmail(req.Email)
 	if err != nil {

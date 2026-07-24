@@ -20,12 +20,19 @@ import (
 	"gorm.io/gorm"
 )
 
-// Roles that are subject to device binding. Admins/superadmins bypass — they
-// need unrestricted access in case of emergency (e.g. WAHA down).
+// Roles that are subject to device binding.
+//
+// DISABLED semua (Bu Santi 24 Jul 2026): kasir sering ganti (part-time /
+// rolling shift), Bu Santi tidak selalu standby tab untuk approve. Ribet
+// operasional. Trade-off security accepted: kredential email+password kasir
+// sudah cukup, tidak perlu additional device gate.
+//
+// Map tetap ada + IsGatedRole tetap dipanggil supaya kalau nanti Bu Santi
+// mau re-enable (mis. ganti kebijakan, ada issue security), tinggal isi
+// entry-nya kembali. Trusted_devices table, /auth/devices/* endpoints,
+// dan Emergency Approve UI di Settings tetap dipertahankan.
 var deviceGatedRoles = map[enum.Role]bool{
-	enum.RoleCashier: true,
-	enum.RoleStaff:   true,
-	enum.RoleUser:    true,
+	// (kosong — tidak ada role yang di-gate)
 }
 
 // Minimum gap between resending approval WA for the same pending device.

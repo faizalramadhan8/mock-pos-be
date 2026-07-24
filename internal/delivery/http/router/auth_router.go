@@ -19,6 +19,8 @@ func UseAuthRouter(ctx context.Context, r fiber.Router) {
 
 	authGroup := r.Group("/auth")
 	authGroup.Post("/register", ctrl.Register)
+	// Public customer register — force role='user'. Bu Santi 21 Jul 2026.
+	authGroup.Post("/register-customer", ctrl.RegisterCustomer)
 	authGroup.Post("/login", ctrl.Login)
 	authGroup.Post("/logout", ctrl.Logout)
 	authGroup.Get("/session", auth.AllowAll(), ctrl.GetProfile)

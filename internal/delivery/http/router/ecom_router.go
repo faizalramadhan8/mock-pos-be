@@ -30,3 +30,13 @@ func UseEcomAdminRouter(ctx context.Context, r fiber.Router) {
 	gated.Get("/products/:id", ctrl.GetProduct)
 	gated.Patch("/products/:id/ecom-fields", ctrl.UpdateEcomFields)
 }
+
+// UseEcomPublicRouter — public storefront endpoints (no auth). Customer
+// browse produk sebelum login. Filter enforce ecom_is_available + stock_ecom>0.
+func UseEcomPublicRouter(ctx context.Context, r fiber.Router) {
+	ctrl := handler.NewEcomPublicController(ctx)
+	g := r.Group("/ecom")
+	g.Get("/categories", ctrl.ListCategories)
+	g.Get("/products", ctrl.ListProducts)
+	g.Get("/products/:id", ctrl.GetProduct)
+}

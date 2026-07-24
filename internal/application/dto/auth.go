@@ -17,6 +17,16 @@ type RegisterResponse struct {
 	Role     string `json:"role"`
 }
 
+// CustomerRegisterRequest — public register untuk customer ecom (Bu Santi
+// 21 Jul 2026). Force role='user' di usecase. Password 6+ karakter (lebih
+// friendly untuk customer non-tech vs staff 8+).
+type CustomerRegisterRequest struct {
+	FullName    string `json:"fullname" validate:"required,min=3"`
+	Email       string `json:"email" validate:"required,email"`
+	PhoneNumber string `json:"phone" validate:"required,min=8,max=20"`
+	Password    string `json:"password" validate:"required,min=6"`
+}
+
 type LoginRequest struct {
 	Email             string `json:"email,omitempty" validate:"required,email"`
 	Password          string `json:"password" validate:"required,min=8"`

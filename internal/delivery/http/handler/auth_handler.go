@@ -27,6 +27,30 @@ func NewAuthController(ctx context.Context) *AuthController {
 	}
 }
 
+// RegisterCustomer — public endpoint untuk customer daftar akun ecom.
+// Force role='user' di usecase (cegah escalation). Return LoginResponse
+// dengan JWT langsung untuk auto-login setelah register. Bu Santi 21 Jul 2026.
+func (ctrl *AuthController) RegisterCustomer(c *fiber.Ctx) error {
+	var req dto.CustomerRegisterRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(dto.ApiResponse{
+			Code: fiber.ErrUnprocessableEntity.Code, Message: fiber.ErrUnprocessableEntity.Message, Error: err.Error(),
+		})
+	}
+	if err := util.ValidateRequest(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{
+			Code: fiber.ErrBadRequest.Code, Message: fiber.ErrBadRequest.Message, Error: err,
+		})
+	}
+	resp, fail := ctrl.AuthService.RegisterCustomer(req)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
+			Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message,
+		})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Registration successful", Body: resp})
+}
+
 func (ctrl *AuthController) Register(c *fiber.Ctx) error {
 	var req dto.RegisterRequest
 
