@@ -40,3 +40,24 @@ func UseEcomPublicRouter(ctx context.Context, r fiber.Router) {
 	g.Get("/products", ctrl.ListProducts)
 	g.Get("/products/:id", ctrl.GetProduct)
 }
+
+// UseEcomCustomerRouter — endpoints untuk authenticated customer (cart, address,
+// order). Role 'user' + superadmin. Bu Santi 24 Jul 2026.
+func UseEcomCustomerRouter(ctx context.Context, r fiber.Router) {
+	configs := ctx.Value(enum.ConfigCtxKey).(*config.Config)
+	auth := middleware.NewRBACMiddleware(configs.JwtSecret, configs.JwtAccessTokenExpiresIn)
+	cartCtrl := handler.NewEcomCartController(ctx)
+	addrCtrl := handler.NewEcomAddressController(ctx)
+
+	g := r.Group("/ecom", auth.AllowEcomCustomer())
+	// Cart
+	g.Get("/cart", cartCtrl.GetCart)
+	g.Post("/cart/items", cartCtrl.AddItem)
+	g.Patch("/cart/items/:id", cartCtrl.UpdateItem)
+	g.Delete("/cart/items/:id", cartCtrl.RemoveItem)
+	// Address book
+	g.Get("/addresses", addrCtrl.List)
+	g.Post("/addresses", addrCtrl.Create)
+	g.Put("/addresses/:id", addrCtrl.Update)
+	g.Delete("/addresses/:id", addrCtrl.Delete)
+}

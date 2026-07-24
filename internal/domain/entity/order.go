@@ -29,6 +29,21 @@ type Order struct {
 	OrderDiscountValue float64        `gorm:"type:decimal(15,2);null;default:0" json:"order_discount_value"`
 	OrderDiscount      float64        `gorm:"type:decimal(15,2);null;default:0" json:"order_discount"`
 	CreatedBy          string         `gorm:"type:varchar(36);not null" json:"created_by"`
+	// Ecom fields (migration 000051, Bu Santi 24 Jul 2026). Semua NULL untuk
+	// order POS existing.
+	OrderSource             string     `gorm:"column:order_source;type:varchar(10);not null;default:pos" json:"order_source"`
+	EcomUserID              *string    `gorm:"column:ecom_user_id;type:varchar(36);null" json:"ecom_user_id,omitempty"`
+	ShippingAddressSnapshot *string    `gorm:"column:shipping_address_snapshot;type:json;null" json:"shipping_address_snapshot,omitempty"`
+	ShippingCourier         *string    `gorm:"column:shipping_courier;type:varchar(50);null" json:"shipping_courier,omitempty"`
+	ShippingService         *string    `gorm:"column:shipping_service;type:varchar(50);null" json:"shipping_service,omitempty"`
+	ShippingCost            float64    `gorm:"column:shipping_cost;type:decimal(15,2);null;default:0" json:"shipping_cost,omitempty"`
+	ShippingETD             *string    `gorm:"column:shipping_etd;type:varchar(50);null" json:"shipping_etd,omitempty"`
+	ShippingAWB             *string    `gorm:"column:shipping_awb;type:varchar(100);null" json:"shipping_awb,omitempty"`
+	EcomStatus              *string    `gorm:"column:ecom_status;type:varchar(30);null" json:"ecom_status,omitempty"`
+	PaymentSnapToken        *string    `gorm:"column:payment_snap_token;type:varchar(100);null" json:"payment_snap_token,omitempty"`
+	PaymentReference        *string    `gorm:"column:payment_reference;type:varchar(100);null" json:"payment_reference,omitempty"`
+	PaymentPaidAt           *time.Time `gorm:"column:payment_paid_at;type:datetime;null" json:"payment_paid_at,omitempty"`
+	PaymentExpiredAt        *time.Time `gorm:"column:payment_expired_at;type:datetime;null" json:"payment_expired_at,omitempty"`
 	CreatedAt          time.Time      `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
 	UpdatedAt          time.Time      `gorm:"default:current_timestamp()" json:"updated_at,omitempty"`
 	DeletedAt          gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`

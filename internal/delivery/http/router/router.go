@@ -67,4 +67,7 @@ func UseRouter(ctx context.Context, r fiber.Router) {
 
 	// E-commerce Public storefront (Fase 2) — no auth, browse produk publik.
 	UseEcomPublicRouter(ctx, prefix)
+
+	// E-commerce Customer (Fase 3) — cart, address, checkout, order tracking.
+	UseEcomCustomerRouter(ctx, prefix)
 }

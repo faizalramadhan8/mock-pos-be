@@ -146,3 +146,13 @@ func (m RBACMiddleware) AllowEcomAdmins() fiber.Handler {
 		string(enum.RoleEcomAdmin),
 	})
 }
+
+// AllowEcomCustomer — customer ecom scope (cart, addresses, checkout, order
+// tracking). Cuma 'user' role + superadmin (untuk support/testing).
+// Bu Santi 24 Jul 2026.
+func (m RBACMiddleware) AllowEcomCustomer() fiber.Handler {
+	return m.allowRole([]string{
+		string(enum.RoleUser),
+		string(enum.RoleSuperAdmin),
+	})
+}
