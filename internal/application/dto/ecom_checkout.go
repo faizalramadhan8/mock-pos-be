@@ -89,11 +89,12 @@ type CustomerOrderDetail struct {
 	} `json:"shipping"`
 
 	Payment struct {
-		Mode        string  `json:"mode"`         // "midtrans" | "manual"
-		SnapToken   string  `json:"snap_token,omitempty"`
-		Reference   string  `json:"reference,omitempty"`
-		PaidAt      *string `json:"paid_at,omitempty"`
-		ExpiredAt   *string `json:"expired_at,omitempty"`
+		Mode            string  `json:"mode"`               // "midtrans" | "manual"
+		SnapToken       string  `json:"snap_token,omitempty"`
+		SnapRedirectURL string  `json:"snap_redirect_url,omitempty"` // full URL to Midtrans hosted checkout
+		Reference       string  `json:"reference,omitempty"`
+		PaidAt          *string `json:"paid_at,omitempty"`
+		ExpiredAt       *string `json:"expired_at,omitempty"`
 	} `json:"payment"`
 }
 

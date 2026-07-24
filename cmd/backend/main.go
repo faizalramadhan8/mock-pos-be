@@ -109,6 +109,16 @@ func main() {
 	waService := whatsapp.New(cfg.WahaURL, cfg.WahaAPIKey, cfg.WahaSession, cfg.WAReceiptEnabled, logfile)
 	ctx = context.WithValue(ctx, enum.WhatsAppCtxKey, waService)
 
+	// Log ecom integration status — supaya operator cepat lihat mode aktif
+	// tanpa harus test flow checkout dulu.
+	logfile.Info().
+		Bool("midtrans_configured", cfg.MidtransServerKey != "").
+		Bool("midtrans_prod", cfg.MidtransIsProd).
+		Bool("biteship_configured", cfg.BiteshipAPIKey != "").
+		Str("biteship_origin_area", cfg.BiteshipOriginArea).
+		Str("biteship_origin_postal", cfg.BiteshipOriginPostal).
+		Msg("ecom integrations")
+
 	app := fiber.New(fiber.Config{
 		ProxyHeader: fiber.HeaderXForwardedFor,
 		AppName:     cfg.AppName,

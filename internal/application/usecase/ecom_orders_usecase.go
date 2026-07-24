@@ -9,18 +9,42 @@ import (
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
 	"github.com/faizalramadhan/pos-be/internal/domain/entity"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
+	"github.com/faizalramadhan/pos-be/internal/infrastructure/config"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
 )
 
 type EcomOrdersService struct {
-	DB  *gorm.DB
-	Log *zerolog.Logger
+	DB       *gorm.DB
+	Log      *zerolog.Logger
+	Cfg      *config.Config
 }
 
 func NewEcomOrdersService(ctx context.Context, db *gorm.DB) *EcomOrdersService {
 	logger := ctx.Value(enum.LoggerCtxKey).(*zerolog.Logger)
-	return &EcomOrdersService{DB: db, Log: logger}
+	cfg := ctx.Value(enum.ConfigCtxKey).(*config.Config)
+	return &EcomOrdersService{DB: db, Log: logger, Cfg: cfg}
+}
+
+// midtransSnapURL — build hosted checkout URL dari snap_token + env.
+// Format v3/redirection = Snap page terbaru (v2/vtweb deprecated).
+// Sandbox vs Prod ditentukan dari MIDTRANS_IS_PROD (bukan dari isi token —
+// token tidak punya prefix yang bisa di-detect).
+// isStubToken — token yang di-generate saat Midtrans belum configured.
+// FE tidak render tombol "Bayar Sekarang" untuk order dengan stub token.
+func isStubToken(t string) bool {
+	return len(t) >= 5 && t[:5] == "stub-"
+}
+
+func (s *EcomOrdersService) midtransSnapURL(token string) string {
+	if token == "" {
+		return ""
+	}
+	base := "https://app.sandbox.midtrans.com"
+	if s.Cfg.MidtransIsProd {
+		base = "https://app.midtrans.com"
+	}
+	return base + "/snap/v3/redirection/" + token
 }
 
 func (s *EcomOrdersService) List(userID string) ([]dto.CustomerOrderListItem, *dto.ApiError) {
@@ -128,10 +152,13 @@ func (s *EcomOrdersService) GetDetail(userID, orderID string) (*dto.CustomerOrde
 		}
 	}
 
-	// Payment
-	if order.PaymentSnapToken != nil && *order.PaymentSnapToken != "" {
+	// Payment — snap_token yang di-prefix "stub-" = stub dev mode, treat as
+	// manual (BE belum di-config Midtrans / call failed saat checkout).
+	if order.PaymentSnapToken != nil && *order.PaymentSnapToken != "" &&
+		!isStubToken(*order.PaymentSnapToken) {
 		detail.Payment.Mode = "midtrans"
 		detail.Payment.SnapToken = *order.PaymentSnapToken
+		detail.Payment.SnapRedirectURL = s.midtransSnapURL(*order.PaymentSnapToken)
 	} else {
 		detail.Payment.Mode = "manual"
 	}
