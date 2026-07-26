@@ -65,7 +65,7 @@ func (r *ProductRepository) Create(product *entity.Product) error {
 }
 
 func (r *ProductRepository) Update(product *entity.Product) error {
-	// CRITICAL: nil-kan preloaded association objects sebelum Save.
+	// CRITICAL #1: nil-kan preloaded association objects sebelum Save.
 	// FindByID Preload("Category") + Preload("Supplier"), jadi product struct
 	// punya 2 representasi FK: (1) CategoryID string, (2) Category pointer ke
 	// object lama. GORM Save akan auto-resync FK dari association object,
@@ -74,7 +74,19 @@ func (r *ProductRepository) Update(product *entity.Product) error {
 	// Nil-out di sini memastikan GORM hanya pakai FK string yang sudah diset.
 	product.Category = nil
 	product.Supplier = nil
-	return r.DB.Save(product).Error
+	product.EcomCategory = nil
+
+	// CRITICAL #2 (Bu Santi 26 Jul 2026 — insiden Sunbay Evaporasi):
+	// JANGAN pernah update kolom `stock` via path ini. Stock hanya boleh
+	// mutate via 3 flow atomic:
+	//   1. Order Create/MarkAsPaid → `gorm.Expr("stock - ?", delta)`
+	//   2. Order Cancel/Refund → `gorm.Expr("stock + ?", delta)`
+	//   3. AdjustStock endpoint (Sesuaikan Stok, audit trail wajib)
+	// Kalau admin buka Edit Produk saat kasir lagi jual, form FE punya nilai
+	// stock lama. Save() overwrite stok yang sudah decrement → stok bocor,
+	// movement record tetap ada (double-truth). Skip kolom stock cegah bug.
+	// Same logic untuk stock_ecom (ecom checkout decrement) supaya konsisten.
+	return r.DB.Omit("stock", "stock_ecom", "created_at").Save(product).Error
 }
 
 func (r *ProductRepository) AdjustStock(id string, delta int) error {
