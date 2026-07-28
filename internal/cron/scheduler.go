@@ -93,6 +93,46 @@ func (s *Scheduler) Start() {
 			s.runMemberPointsExpiry()
 		}
 	}()
+
+	// Ecom auto-complete — kalau customer lupa konfirmasi "Barang Diterima"
+	// setelah 7 hari sejak kurir tag delivered, sistem auto-mark completed.
+	// Sesuai pattern Tokopedia/Shopee. Cron jalan tiap hari 03:00 WIB
+	// (low-traffic supaya tidak ganggu jam operasional toko).
+	go func() {
+		s.Log.Info().Msg("Ecom auto-complete scheduler started")
+		jkt := jktLocation()
+		for {
+			nowLocal := time.Now().In(jkt)
+			next := time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 3, 0, 0, 0, jkt)
+			if nowLocal.After(next) {
+				next = next.Add(24 * time.Hour)
+			}
+			time.Sleep(time.Until(next))
+			s.runEcomAutoComplete()
+		}
+	}()
+}
+
+// runEcomAutoComplete — mark completed semua ecom order yang ecom_status =
+// 'delivered' AND ecom_delivered_at <= NOW - 7 hari. Fallback kalau customer
+// lupa konfirmasi. Batch single UPDATE — cukup untuk skala Bu Santi (belasan
+// order/hari maks).
+func (s *Scheduler) runEcomAutoComplete() {
+	cutoff := time.Now().Add(-7 * 24 * time.Hour)
+	res := s.DB.Exec(`
+		UPDATE orders
+		SET ecom_status = 'completed', status = 'completed'
+		WHERE order_source = 'ecom'
+		  AND ecom_status = 'delivered'
+		  AND ecom_delivered_at IS NOT NULL
+		  AND ecom_delivered_at <= ?
+		  AND deleted_at IS NULL
+	`, cutoff)
+	if res.Error != nil {
+		s.Log.Error().Err(res.Error).Msg("Ecom auto-complete: update failed")
+		return
+	}
+	s.Log.Info().Int64("affected", res.RowsAffected).Msg("Ecom auto-complete: done")
 }
 
 // jktLocation returns Asia/Jakarta tz (fallback UTC) — semua cron mengikuti

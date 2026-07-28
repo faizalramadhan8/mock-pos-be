@@ -82,6 +82,44 @@ func (s *EcomOrdersService) List(userID string) ([]dto.CustomerOrderListItem, *d
 	return out, nil
 }
 
+// ConfirmReceived — customer klik "Barang Diterima" di app. Transisi
+// shipped|delivered → completed. Cegah customer transisi status yang bukan
+// haknya (mis. mark cancelled) dengan hardcode target = "completed" di sini.
+//
+// Marketplace pattern (Tokopedia/Shopee/Blibli): dana toko dilepas dari escrow
+// baru setelah customer konfirmasi. Di kita dana Midtrans langsung masuk
+// rekening Bu Santi jadi tidak ada escrow, tapi flow ini masih guna:
+//   - Gate review (cuma yang sudah konfirmasi terima yang bisa review)
+//   - Confirmation window untuk customer complain sebelum "final"
+//   - Audit data akurat: terima ≠ kurir tag delivered
+func (s *EcomOrdersService) ConfirmReceived(userID, orderID string) (*dto.CustomerOrderDetail, *dto.ApiError) {
+	var order entity.Order
+	if err := s.DB.Where("id = ? AND ecom_user_id = ? AND order_source = 'ecom' AND deleted_at IS NULL", orderID, userID).
+		First(&order).Error; err != nil {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Order tidak ditemukan"}
+	}
+	current := ""
+	if order.EcomStatus != nil {
+		current = *order.EcomStatus
+	}
+	if current != "shipped" && current != "delivered" {
+		return nil, &dto.ApiError{
+			StatusCode: fiber.ErrBadRequest,
+			Message:    "Belum bisa konfirmasi terima — status saat ini: " + current,
+		}
+	}
+	updates := map[string]interface{}{
+		"ecom_status": "completed",
+		"status":      "completed", // sync POS-side (mirror UpdateStatus admin)
+	}
+	if err := s.DB.Model(&entity.Order{}).Where("id = ?", orderID).Updates(updates).Error; err != nil {
+		s.Log.Error().Err(err).Str("order_id", orderID).Msg("customer confirm received: update failed")
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Gagal simpan konfirmasi"}
+	}
+	s.Log.Info().Str("order_id", orderID).Str("user_id", userID).Str("from", current).Msg("customer confirmed order received")
+	return s.GetDetail(userID, orderID)
+}
+
 func (s *EcomOrdersService) GetDetail(userID, orderID string) (*dto.CustomerOrderDetail, *dto.ApiError) {
 	var order entity.Order
 	if err := s.DB.Preload("Items").
@@ -102,6 +140,10 @@ func (s *EcomOrdersService) GetDetail(userID, orderID string) (*dto.CustomerOrde
 		Total:        order.Total,
 		EcomStatus:   ecomStatus,
 		CreatedAt:    order.CreatedAt.Format(time.RFC3339),
+	}
+	if order.EcomDeliveredAt != nil {
+		dstr := order.EcomDeliveredAt.Format(time.RFC3339)
+		detail.EcomDeliveredAt = &dstr
 	}
 
 	// Items
@@ -155,15 +197,22 @@ func (s *EcomOrdersService) GetDetail(userID, orderID string) (*dto.CustomerOrde
 		}
 	}
 
-	// Payment — snap_token yang di-prefix "stub-" = stub dev mode, treat as
-	// manual (BE belum di-config Midtrans / call failed saat checkout).
-	if order.PaymentSnapToken != nil && *order.PaymentSnapToken != "" &&
-		!isStubToken(*order.PaymentSnapToken) {
-		detail.Payment.Mode = "midtrans"
-		detail.Payment.SnapToken = *order.PaymentSnapToken
-		detail.Payment.SnapRedirectURL = s.midtransSnapURL(*order.PaymentSnapToken)
+	// Payment — PG DOKU (28 Jul 2026). Kalau payment_url ke-set dan bukan
+	// stub, tampil sebagai mode="pg" dengan link ke DOKU checkout. Kalau
+	// kosong/stub = manual (customer transfer bank + hubungi admin).
+	// Order lama Midtrans yang punya payment_snap_token tapi payment_url
+	// kosong dianggap manual — Bu Santi harus verify manual.
+	if order.PaymentURL != nil && *order.PaymentURL != "" && !isStubToken(*order.PaymentURL) {
+		detail.Payment.Mode = "pg"
+		detail.Payment.PaymentURL = *order.PaymentURL
 	} else {
 		detail.Payment.Mode = "manual"
+	}
+	if order.PaymentChannel != nil {
+		detail.Payment.Channel = *order.PaymentChannel
+	}
+	if order.PaymentChannelCategory != nil {
+		detail.Payment.ChannelCategory = *order.PaymentChannelCategory
 	}
 	if order.PaymentReference != nil {
 		detail.Payment.Reference = *order.PaymentReference

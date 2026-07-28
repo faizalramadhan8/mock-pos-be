@@ -91,14 +91,19 @@ func UseEcomCustomerRouter(ctx context.Context, r fiber.Router) {
 	// Customer own orders
 	g.Get("/orders", ordersCtrl.List)
 	g.Get("/orders/:id", ordersCtrl.GetDetail)
+	// Marketplace-pattern buyer confirmation (28 Jul 2026) — kurir tag
+	// delivered → customer harus konfirmasi manual → completed.
+	g.Post("/orders/:id/confirm-received", ordersCtrl.ConfirmReceived)
 
 	// Sprint 5b — Reviews (customer submit + check eligibility).
 	g.Get("/products/:id/reviews/me", reviewCtrl.CanReviewMe)
 	g.Post("/reviews", reviewCtrl.Submit)
 
-	// Midtrans webhook — PUBLIC (Midtrans server hits this, no JWT).
-	// Mounted di r (root) — bukan grup /ecom gated.
-	r.Post("/ecom/payments/webhook/midtrans", checkoutCtrl.MidtransWebhook)
+	// PG DOKU webhook (28 Jul 2026, ganti Midtrans) — PUBLIC, no JWT.
+	// alifworks PG server hits this URL yang di-set di CreatePayment
+	// callback_url. Response DOKU-standard {responseCode, responseMessage}
+	// via handler-nya.
+	r.Post("/ecom/payments/webhook/pg", checkoutCtrl.PGWebhook)
 	// Biteship webhook — public juga, sig verified via HMAC-SHA256 di handler.
 	r.Post("/ecom/shipping/webhook/biteship", checkoutCtrl.BiteshipWebhook)
 }

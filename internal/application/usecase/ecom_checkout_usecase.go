@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -13,30 +14,33 @@ import (
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
 	"github.com/faizalramadhan/pos-be/internal/infrastructure/config"
 	"github.com/faizalramadhan/pos-be/internal/infrastructure/email"
-	"github.com/faizalramadhan/pos-be/internal/infrastructure/midtrans"
+	// Midtrans deprecated 28 Jul 2026 — call site di-comment, package tetap
+	// ada untuk backward-compat + rollback path kalau PG down.
+	// "github.com/faizalramadhan/pos-be/internal/infrastructure/midtrans"
+	"github.com/faizalramadhan/pos-be/internal/infrastructure/pg"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
 )
 
 type EcomCheckoutService struct {
-	DB       *gorm.DB
-	Log      *zerolog.Logger
-	Midtrans *midtrans.Client
-	Email    *email.Client
-	Voucher  *EcomVoucherService
-	AppURL   string
+	DB      *gorm.DB
+	Log     *zerolog.Logger
+	PG      *pg.Client
+	Email   *email.Client
+	Voucher *EcomVoucherService
+	AppURL  string
 }
 
 func NewEcomCheckoutService(ctx context.Context, db *gorm.DB) *EcomCheckoutService {
 	logger := ctx.Value(enum.LoggerCtxKey).(*zerolog.Logger)
 	cfg := ctx.Value(enum.ConfigCtxKey).(*config.Config)
 	return &EcomCheckoutService{
-		DB:       db,
-		Log:      logger,
-		Midtrans: midtrans.NewClient(cfg.MidtransServerKey, cfg.MidtransIsProd),
-		Email:    email.NewClient(cfg.BrevoAPIKey, cfg.BrevoSenderEmail, cfg.BrevoSenderName),
-		Voucher:  NewEcomVoucherService(ctx, db),
-		AppURL:   cfg.AppURL,
+		DB:      db,
+		Log:     logger,
+		PG:      pg.NewClient(cfg.PGBaseURL, cfg.PGAppKey, cfg.PGAppSecret, cfg.PGMerchantName),
+		Email:   email.NewClient(cfg.BrevoAPIKey, cfg.BrevoSenderEmail, cfg.BrevoSenderName),
+		Voucher: NewEcomVoucherService(ctx, db),
+		AppURL:  cfg.AppURL,
 	}
 }
 
@@ -252,58 +256,83 @@ func (s *EcomCheckoutService) CreateOrder(userID string, userEmail, userPhone, u
 		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to create order"}
 	}
 
-	// Request Midtrans Snap token (atau stub kalau not configured).
-	itemDetails := make([]midtrans.ItemDetail, 0, len(orderItems)+1)
+	// Request PG DOKU checkout URL (atau stub kalau not configured). Ganti
+	// Midtrans Snap sejak 28 Jul 2026 — Bu Santi pilih alifworks PG wrapper.
+	pgItems := make([]pg.CreatePaymentItem, 0, len(orderItems)+1)
 	for _, it := range orderItems {
-		itemDetails = append(itemDetails, midtrans.ItemDetail{
-			ID: it.ProductID, Name: it.Name, Price: it.UnitPrice, Quantity: it.Quantity,
+		pgItems = append(pgItems, pg.CreatePaymentItem{
+			ProductID: it.ProductID, ProductCode: it.ProductID, ProductName: it.Name,
+			Price: it.UnitPrice, Quantity: it.Quantity,
 		})
 	}
 	if req.ShippingCost > 0 {
-		itemDetails = append(itemDetails, midtrans.ItemDetail{
-			ID: "shipping", Name: fmt.Sprintf("Ongkir %s %s", req.ShippingCourier, req.ShippingService),
-			Price: req.ShippingCost, Quantity: 1,
+		pgItems = append(pgItems, pg.CreatePaymentItem{
+			ProductID: "shipping", ProductCode: "shipping",
+			ProductName: fmt.Sprintf("Ongkir %s %s", req.ShippingCourier, req.ShippingService),
+			Price:       req.ShippingCost, Quantity: 1,
 		})
 	}
 
-	snapReq := midtrans.SnapRequest{
-		TransactionDetails: midtrans.TransactionDetails{
-			OrderID:     orderID,
-			GrossAmount: total,
-		},
-		ItemDetails: itemDetails,
-		CustomerDetails: &midtrans.CustomerDetail{
-			FirstName: addr.RecipientName,
-			Email:     userEmail,
-			Phone:     addr.RecipientPhone,
-		},
-		Expiry: &midtrans.SnapExpiry{
-			StartTime: now.Format("2006-01-02 15:04:05 -0700"),
-			Unit:      "hour",
-			Duration:  24,
-		},
+	// Callback + success URL harus absolute — PG server yang ping ini, bukan
+	// browser. AppURL wajib di-set di config prod supaya webhook masuk.
+	callbackURL := strings.TrimRight(s.AppURL, "/") + "/api/v1/ecom/payments/webhook/pg"
+	successURL := strings.TrimRight(s.AppURL, "/") + "/shop/pesanan/" + orderID + "?paid=1"
+
+	// Merchant name — samaran per request Bu Santi 28 Jul 2026 (jangan pakai
+	// nama "Toko Bahan Kue Santi" di field ini). Fallback "Testing" kalau
+	// config kosong (nilai dev).
+	merchantName := s.PG.MerchantName
+	if merchantName == "" {
+		merchantName = "Testing"
 	}
 
-	snapResp, snapErr := s.Midtrans.CreateSnapToken(snapReq)
-	if snapErr != nil {
-		s.Log.Warn().Err(snapErr).Str("order_id", orderID).Msg("Snap token failed, fallback manual")
+	pgReq := pg.CreatePaymentRequest{
+		Channel:        req.PaymentChannel,
+		TotalAmount:    total,
+		TrxID:          orderID,
+		BillingEmail:   userEmail,
+		BillingName:    addr.RecipientName,
+		BillingPhone:   addr.RecipientPhone,
+		BillingAddress: addr.StreetAddress,
+		BillingID:      userID,
+		BillingUID:     userID,
+		CallbackURL:    callbackURL,
+		SuccessURL:     successURL,
+		Description:    fmt.Sprintf("Order #%s", orderID[:8]),
+		Merchant:       merchantName,
+		Remark:         "",
+		Item:           pgItems,
 	}
 
-	paymentMode := "midtrans"
-	snapToken := ""
-	snapRedirectURL := ""
-	if s.Midtrans.IsConfigured() && snapResp != nil {
-		snapToken = snapResp.Token
-		snapRedirectURL = snapResp.RedirectURL
+	pgCtx, pgCancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer pgCancel()
+	pgResp, pgErr := s.PG.CreatePayment(pgCtx, pgReq)
+	if pgErr != nil {
+		s.Log.Warn().Err(pgErr).Str("order_id", orderID).Str("channel", req.PaymentChannel).Msg("PG create payment failed, fallback manual")
+	}
+
+	paymentMode := "pg"
+	paymentURL := ""
+	channelSaved := req.PaymentChannel
+	categorySaved := req.PaymentChannelCategory
+	if s.PG.IsConfigured() && pgResp != nil && pgResp.PaymentURL != "" {
+		paymentURL = pgResp.PaymentURL
 	} else {
 		paymentMode = "manual"
 	}
-	if snapToken != "" {
-		// Save snap_token ke order supaya bisa retry payment nanti.
-		if err := tx.Model(&entity.Order{}).Where("id = ?", orderID).
-			Update("payment_snap_token", snapToken).Error; err != nil {
-			s.Log.Warn().Err(err).Msg("Failed to save snap_token")
-		}
+	// Save PG snapshot ke order supaya retry payment + admin view punya konteks.
+	pgUpdate := map[string]interface{}{
+		"payment_channel":          channelSaved,
+		"payment_channel_category": categorySaved,
+	}
+	if paymentURL != "" {
+		pgUpdate["payment_url"] = paymentURL
+	}
+	if pgResp != nil && pgResp.PaymentID != "" {
+		pgUpdate["payment_reference"] = pgResp.PaymentID
+	}
+	if err := tx.Model(&entity.Order{}).Where("id = ?", orderID).Updates(pgUpdate).Error; err != nil {
+		s.Log.Warn().Err(err).Msg("Failed to save PG snapshot")
 	}
 
 	// Clear ONLY consumed cart items — item lain tetap tersimpan untuk
@@ -331,18 +360,26 @@ func (s *EcomCheckoutService) CreateOrder(userID string, userEmail, userPhone, u
 		VoucherCode:     voucherCodeStr,
 		VoucherDiscount: voucherDiscount,
 		Total:           total,
-		SnapToken:       snapToken,
-		SnapRedirectURL: snapRedirectURL,
+		PaymentURL:      paymentURL,
+		PaymentChannel:  channelSaved,
 		PaymentMode:     paymentMode,
 		EcomStatus:      ecomStatus,
 	}, nil
 }
 
-// HandleMidtransNotification — webhook dari Midtrans setiap payment status change.
-// Update ecom_status + paid_at. Rollback stock kalau expired/cancel.
-func (s *EcomCheckoutService) HandleMidtransNotification(notif midtrans.Notification) *dto.ApiError {
+// HandlePGNotification — webhook DOKU (via alifworks PG wrapper) setiap
+// payment status change. Update ecom_status + paid_at. Rollback stock kalau
+// FAILED/VOIDED.
+//
+// DOKU response format kita return: {responseCode, responseMessage} — handler
+// yang bungkus (bukan default ApiResponse envelope) supaya DOKU parse OK.
+func (s *EcomCheckoutService) HandlePGNotification(notif pg.WebhookPayload) *dto.ApiError {
+	orderID := notif.Order.InvoiceNumber
+	if orderID == "" {
+		return &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Missing invoice_number"}
+	}
 	var order entity.Order
-	if err := s.DB.Where("id = ?", notif.OrderID).First(&order).Error; err != nil {
+	if err := s.DB.Where("id = ?", orderID).First(&order).Error; err != nil {
 		return &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Order not found"}
 	}
 	if order.OrderSource != "ecom" {
@@ -353,22 +390,34 @@ func (s *EcomCheckoutService) HandleMidtransNotification(notif midtrans.Notifica
 	shouldRestoreStock := false
 	shouldMarkPaid := false
 
-	switch notif.TransactionStatus {
-	case "settlement", "capture":
+	// DOKU transaction status: SUCCESS / FAILED / VOIDED. Pending state tidak
+	// ada karena PG hanya kirim event saat customer submit action (bukan saat
+	// initial VA generate).
+	switch strings.ToUpper(notif.Transaction.Status) {
+	case "SUCCESS":
 		newStatus = "paid"
 		shouldMarkPaid = true
-	case "pending":
-		newStatus = "pending_payment"
-	case "expire":
-		newStatus = "expired"
+	case "FAILED":
+		newStatus = "cancelled"
 		shouldRestoreStock = true
-	case "cancel", "deny":
+	case "VOIDED":
 		newStatus = "cancelled"
 		shouldRestoreStock = true
 	}
 
 	if newStatus == "" {
 		return nil // ignore unknown status
+	}
+
+	// Idempotency — kalau order sudah paid dari webhook sebelumnya, jangan
+	// double-fire email + double-restore stock.
+	currentEcom := ""
+	if order.EcomStatus != nil {
+		currentEcom = *order.EcomStatus
+	}
+	if currentEcom == newStatus {
+		s.Log.Info().Str("order_id", orderID).Str("status", newStatus).Msg("PG webhook: duplicate, skip")
+		return nil
 	}
 
 	tx := s.DB.Begin()
@@ -378,25 +427,32 @@ func (s *EcomCheckoutService) HandleMidtransNotification(notif midtrans.Notifica
 		}
 	}()
 
+	// channel.id dari DOKU sudah kaya info kanal (VIRTUAL_ACCOUNT_BCA/QRIS/
+	// EMONEY_SHOPEEPAY). Simpan sebagai reference kalau ada — cegah overwrite
+	// channel yang customer pilih di checkout kalau field ini kosong.
 	updates := map[string]interface{}{
-		"ecom_status":       newStatus,
-		"payment_reference": notif.TransactionID,
-		"payment":           notif.PaymentType,
+		"ecom_status": newStatus,
+	}
+	if notif.Transaction.OriginalRequestID != "" {
+		updates["payment_reference"] = notif.Transaction.OriginalRequestID
 	}
 	if shouldMarkPaid {
 		now := time.Now()
 		updates["payment_paid_at"] = now
 		updates["status"] = "completed" // POS side status
 	}
-	if err := tx.Model(&entity.Order{}).Where("id = ?", notif.OrderID).Updates(updates).Error; err != nil {
+	if err := tx.Model(&entity.Order{}).Where("id = ?", orderID).Updates(updates).Error; err != nil {
 		tx.Rollback()
 		return &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to update order"}
 	}
 
 	if shouldRestoreStock {
 		var items []entity.OrderItem
-		tx.Where("order_id = ?", notif.OrderID).Find(&items)
+		tx.Where("order_id = ?", orderID).Find(&items)
 		for _, it := range items {
+			if it.ProductID == "" {
+				continue
+			}
 			tx.Model(&entity.Product{}).Where("id = ?", it.ProductID).
 				Update("stock_ecom", gorm.Expr("stock_ecom + ?", it.Quantity))
 		}
@@ -407,16 +463,16 @@ func (s *EcomCheckoutService) HandleMidtransNotification(notif midtrans.Notifica
 	}
 
 	s.Log.Info().
-		Str("order_id", notif.OrderID).
+		Str("order_id", orderID).
 		Str("new_status", newStatus).
-		Str("txn_status", notif.TransactionStatus).
-		Msg("Midtrans notification processed")
+		Str("pg_status", notif.Transaction.Status).
+		Str("channel", notif.Channel.ID).
+		Msg("PG notification processed")
 
 	// Kirim email konfirmasi pembayaran — best-effort di goroutine, tidak
-	// block response webhook (Midtrans retry kalau webhook lambat > 5 detik).
-	// Fetch order + user email fresh untuk hindari stale data.
+	// block response webhook (DOKU retry kalau webhook lambat > 5 detik).
 	if shouldMarkPaid {
-		go s.sendOrderPaidEmail(notif.OrderID)
+		go s.sendOrderPaidEmail(orderID)
 	}
 
 	return nil

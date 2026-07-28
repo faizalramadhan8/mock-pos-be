@@ -40,9 +40,24 @@ type Config struct {
 
 	// E-commerce Fase 3 integrations (Bu Santi 24 Jul 2026).
 	// Semua optional — kalau kosong, fallback ke stub/manual mode.
-	MidtransServerKey string `koanf:"MIDTRANS_SERVER_KEY"` // API key untuk create Snap token
-	MidtransClientKey string `koanf:"MIDTRANS_CLIENT_KEY"` // untuk FE Snap.js
-	MidtransIsProd    bool   `koanf:"MIDTRANS_IS_PROD"`    // false = sandbox
+	// Midtrans (deprecated 28 Jul 2026, pindah ke PG DOKU wrapper). Field
+	// dipertahankan untuk backward-compat dev env yang masih pakai .env lama;
+	// kode Midtrans di internal/infrastructure/midtrans + call site di-comment.
+	MidtransServerKey string `koanf:"MIDTRANS_SERVER_KEY"`
+	MidtransClientKey string `koanf:"MIDTRANS_CLIENT_KEY"`
+	MidtransIsProd    bool   `koanf:"MIDTRANS_IS_PROD"`
+
+	// Payment Gateway (DOKU via alifworks PG wrapper). BE proxy ke PG:
+	// FE tidak pegang credentials (cegah expose sample-secret di devtools).
+	// Kalau BaseURL/AppKey/AppSecret kosong = stub mode (fake payment_url).
+	// Docs: postman collection Payment Gateway v2 - DOKU.
+	PGBaseURL       string `koanf:"PG_BASE_URL"`       // e.g. https://api-pgsanbox.alifworks.net
+	PGAppKey        string `koanf:"PG_APP_KEY"`        // Basic Auth username
+	PGAppSecret     string `koanf:"PG_APP_SECRET"`     // Basic Auth password
+	PGMerchantName  string `koanf:"PG_MERCHANT_NAME"`  // samaran, e.g. "Testing"
+	// PGWebhookSecret — reserved untuk HMAC verify DOKU notification. Kalau
+	// kosong = skip verify (dev/sandbox). Prod wajib set.
+	PGWebhookSecret string `koanf:"PG_WEBHOOK_SECRET"`
 
 	BiteshipAPIKey     string `koanf:"BITESHIP_API_KEY"`
 	BiteshipOriginArea string `koanf:"BITESHIP_ORIGIN_AREA_ID"` // area ID toko Bu Santi

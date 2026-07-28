@@ -43,3 +43,15 @@ func (ctrl *EcomOrdersController) GetDetail(c *fiber.Ctx) error {
 	}
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "successfully", Body: resp})
 }
+
+// ConfirmReceived — customer klik "Barang Diterima". Body kosong — cukup
+// order id di URL + JWT untuk ownership check di service.
+func (ctrl *EcomOrdersController) ConfirmReceived(c *fiber.Ctx) error {
+	id := c.Params("id")
+	claims := c.Locals("session").(*dto.JWTClaims)
+	resp, fail := ctrl.Service.ConfirmReceived(claims.ID, id)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Terima kasih! Pesanan ditandai selesai.", Body: resp})
+}

@@ -172,6 +172,12 @@ func (s *EcomAdminOrdersService) UpdateStatus(orderID, newStatus, changedBy stri
 
 	updates := map[string]interface{}{"ecom_status": newStatus}
 
+	// Snapshot waktu tandai sampai — dipakai cron auto-complete 7 hari + FE
+	// display "Sampai N hari lalu, konfirmasi ya!" reminder.
+	if newStatus == "delivered" {
+		updates["ecom_delivered_at"] = time.Now()
+	}
+
 	// Cancel → restore stock_ecom + mark POS-side status.
 	if newStatus == "cancelled" {
 		var items []entity.OrderItem
@@ -247,12 +253,21 @@ func (s *EcomAdminOrdersService) SetShipping(orderID, awb, courier, service, cha
 
 // isValidTransition — enforce state machine. Kalau invalid, tolak — cegah
 // admin accidentally klik tombol yang tidak masuk akal.
+//
+// Flow customer-confirmation (28 Jul 2026, mirip Tokopedia/Shopee):
+//   shipped   → delivered  (kurir tandai sampai via Biteship webhook, atau
+//                           admin manual)
+//   delivered → completed  (customer klik "Konfirmasi Diterima")
+//   shipped   → completed  (admin force complete kalau customer complain
+//                           sudah terima tapi lupa konfirmasi — edge case)
+//   delivered → cancelled  (kalau ada dispute / komplain valid → refund flow)
 func isValidTransition(from, to string) bool {
 	allowed := map[string][]string{
 		"pending_payment": {"paid", "cancelled", "expired"},
 		"paid":            {"processing", "shipped", "cancelled"},
 		"processing":      {"shipped", "cancelled"},
-		"shipped":         {"completed", "cancelled"},
+		"shipped":         {"delivered", "completed", "cancelled"},
+		"delivered":       {"completed", "cancelled"},
 		// Terminal states — no transition out.
 		"completed": {},
 		"cancelled": {},
@@ -280,6 +295,10 @@ func buildEcomOrderDetail(order *entity.Order) *dto.CustomerOrderDetail {
 		Total:        order.Total,
 		EcomStatus:   ecomStatus,
 		CreatedAt:    order.CreatedAt.Format(time.RFC3339),
+	}
+	if order.EcomDeliveredAt != nil {
+		dstr := order.EcomDeliveredAt.Format(time.RFC3339)
+		detail.EcomDeliveredAt = &dstr
 	}
 	for _, it := range order.Items {
 		detail.Items = append(detail.Items, dto.CustomerOrderItemDetail{
@@ -319,14 +338,20 @@ func buildEcomOrderDetail(order *entity.Order) *dto.CustomerOrderDetail {
 		detail.Shipping.Address.Zipcode = extractSnapshotField(snap, "zipcode")
 		detail.Shipping.Address.Notes = extractSnapshotField(snap, "notes")
 	}
-	// Payment
-	if order.PaymentSnapToken != nil && *order.PaymentSnapToken != "" && !isStubToken(*order.PaymentSnapToken) {
-		detail.Payment.Mode = "midtrans"
-		detail.Payment.SnapToken = *order.PaymentSnapToken
-		// snap_redirect_url di-build di caller yang ada Cfg — kosongkan di sini
-		// supaya admin view tetap safe (admin ga perlu tombol Bayar).
+	// Payment — PG DOKU (28 Jul 2026). Admin cukup lihat mode + channel +
+	// reference; tombol "Bayar" hanya di sisi customer.
+	if order.PaymentURL != nil && *order.PaymentURL != "" && !isStubToken(*order.PaymentURL) {
+		detail.Payment.Mode = "pg"
+		// PaymentURL sengaja tidak di-expose ke admin — supaya admin tidak
+		// accidentally klik + tercatat sebagai "customer buka" di analytics PG.
 	} else {
 		detail.Payment.Mode = "manual"
+	}
+	if order.PaymentChannel != nil {
+		detail.Payment.Channel = *order.PaymentChannel
+	}
+	if order.PaymentChannelCategory != nil {
+		detail.Payment.ChannelCategory = *order.PaymentChannelCategory
 	}
 	if order.PaymentReference != nil {
 		detail.Payment.Reference = *order.PaymentReference
@@ -528,6 +553,11 @@ func (s *EcomAdminOrdersService) HandleBiteshipWebhook(payload BiteshipWebhookPa
 		mapped := mapBiteshipStatus(payload.Status, ptrString(order.EcomStatus))
 		if mapped != "" {
 			updates["ecom_status"] = mapped
+			// Kurir tandai sampai — stamp delivered_at supaya cron auto-complete
+			// dan FE reminder tau umur-nya.
+			if mapped == "delivered" {
+				updates["ecom_delivered_at"] = time.Now()
+			}
 		}
 	}
 
@@ -587,7 +617,11 @@ func mapBiteshipStatus(biteshipStatus, current string) string {
 	case "picked", "dropping_off":
 		return "shipped"
 	case "delivered":
-		return "completed"
+		// Kurir bilang sampai — TIDAK langsung completed. Marketplace pattern
+		// (Tokopedia/Shopee/Blibli): customer harus konfirmasi manual, sebab
+		// kurir kadang salah tag (dititip, salah alamat, dsb). Fallback:
+		// cron auto-complete 7 hari kalau customer lupa.
+		return "delivered"
 	case "cancelled", "returned", "disposed":
 		return "cancelled"
 	}

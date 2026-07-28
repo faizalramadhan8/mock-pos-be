@@ -87,12 +87,17 @@ func (s *EcomReviewService) ListForProduct(productID string, limit int) ([]dto.R
 }
 
 // CanReview — check apakah user boleh review produk ini. True kalau user
-// punya minimal 1 order dengan status='completed' yang mengandung product ini.
+// punya minimal 1 ecom order dengan ecom_status='completed' yang mengandung
+// product ini.
+//
+// Pakai ecom_status (bukan orders.status POS-side) supaya gate baru berlaku:
+// customer HARUS konfirmasi barang diterima dulu → status jadi completed →
+// baru bisa review. Cegah review palsu dari kurir yang salah tag delivered.
 func (s *EcomReviewService) CanReview(userID, productID string) (bool, *dto.ApiError) {
 	var count int64
 	err := s.DB.Table("order_items oi").
 		Joins("JOIN orders o ON o.id = oi.order_id").
-		Where("o.ecom_user_id = ? AND o.status = 'completed' AND o.deleted_at IS NULL AND oi.product_id = ?", userID, productID).
+		Where("o.ecom_user_id = ? AND o.ecom_status = 'completed' AND o.deleted_at IS NULL AND oi.product_id = ?", userID, productID).
 		Count(&count).Error
 	if err != nil {
 		return false, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to check eligibility"}

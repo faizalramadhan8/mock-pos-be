@@ -43,7 +43,18 @@ type Order struct {
 	ShippingAWB             *string    `gorm:"column:shipping_awb;type:varchar(100);null" json:"shipping_awb,omitempty"`
 	BiteshipOrderID         *string    `gorm:"column:biteship_order_id;type:varchar(64);null" json:"biteship_order_id,omitempty"`
 	EcomStatus              *string    `gorm:"column:ecom_status;type:varchar(30);null" json:"ecom_status,omitempty"`
+	// Waktu Biteship (atau admin manual) tandai "sudah sampai kurir".
+	// Bukan waktu customer konfirmasi terima — itu tetap pakai UpdatedAt saat
+	// transisi delivered → completed. Dipakai cron auto-complete 7 hari.
+	EcomDeliveredAt         *time.Time `gorm:"column:ecom_delivered_at;type:datetime;null" json:"ecom_delivered_at,omitempty"`
 	PaymentSnapToken        *string    `gorm:"column:payment_snap_token;type:varchar(100);null" json:"payment_snap_token,omitempty"`
+	// Payment Gateway DOKU (28 Jul 2026). PaymentSnapToken di-deprecate untuk
+	// order ecom baru — semua checkout ke PGWrapper via internal/infrastructure/pg.
+	// PaymentURL = DOKU checkout link yang customer buka. Channel/Category
+	// snapshot pilihan customer (bca/qris/dst).
+	PaymentURL             *string    `gorm:"column:payment_url;type:varchar(500);null" json:"payment_url,omitempty"`
+	PaymentChannel         *string    `gorm:"column:payment_channel;type:varchar(20);null" json:"payment_channel,omitempty"`
+	PaymentChannelCategory *string    `gorm:"column:payment_channel_category;type:varchar(30);null" json:"payment_channel_category,omitempty"`
 	PaymentReference        *string    `gorm:"column:payment_reference;type:varchar(100);null" json:"payment_reference,omitempty"`
 	PaymentPaidAt           *time.Time `gorm:"column:payment_paid_at;type:datetime;null" json:"payment_paid_at,omitempty"`
 	PaymentExpiredAt        *time.Time `gorm:"column:payment_expired_at;type:datetime;null" json:"payment_expired_at,omitempty"`

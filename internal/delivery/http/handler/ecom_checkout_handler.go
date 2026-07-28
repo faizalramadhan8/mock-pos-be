@@ -8,7 +8,9 @@ import (
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
 	"github.com/faizalramadhan/pos-be/internal/application/usecase"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
-	"github.com/faizalramadhan/pos-be/internal/infrastructure/midtrans"
+	// Midtrans deprecated 28 Jul 2026 — kode di-preserve untuk rollback path.
+	// "github.com/faizalramadhan/pos-be/internal/infrastructure/midtrans"
+	"github.com/faizalramadhan/pos-be/internal/infrastructure/pg"
 	"github.com/faizalramadhan/pos-be/pkg/util"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
@@ -97,33 +99,47 @@ func (ctrl *EcomCheckoutController) CreateOrder(c *fiber.Ctx) error {
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Order created", Body: resp})
 }
 
-// MidtransWebhook — public endpoint, tanpa JWT. Midtrans POST notification tiap
-// status change. Verify SHA512 signature untuk cegah spoofing dari IP acak.
-// Stub mode (server key kosong) bypass verify — dev tetap bisa test.
-func (ctrl *EcomCheckoutController) MidtransWebhook(c *fiber.Ctx) error {
-	var notif midtrans.Notification
+// PGWebhook — public endpoint, tanpa JWT. DOKU (via alifworks PG wrapper)
+// POST notification tiap payment status change. Response format WAJIB DOKU-
+// standard {responseCode, responseMessage} — kalau tidak, DOKU treat as
+// failure dan retry infinitely.
+//
+// Signature verify (HMAC-SHA256 dari header `Signature`) di-skip untuk
+// sekarang — sandbox tidak enforce, dan spec HMAC key belum di-share PG
+// team. Prod TODO: verify pakai PGWebhookSecret.
+//
+// Kode Midtrans webhook lama di-preserve di git history — kalau perlu
+// rollback tinggal git revert commit yang comment out midtrans import + call
+// site di ecom_checkout_usecase.go.
+func (ctrl *EcomCheckoutController) PGWebhook(c *fiber.Ctx) error {
+	var notif pg.WebhookPayload
 	if err := c.BodyParser(&notif); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{Code: fiber.ErrBadRequest.Code, Message: "Invalid payload"})
-	}
-	// Signature verify — hentikan attacker yang POST payload palsu ke webhook.
-	if !ctrl.Checkout.Midtrans.VerifySignature(notif.OrderID, notif.StatusCode, notif.GrossAmount, notif.SignatureKey) {
-		ctrl.Log.Warn().
-			Str("order_id", notif.OrderID).
-			Str("ip", c.IP()).
-			Msg("Midtrans webhook signature mismatch — rejected")
-		return c.Status(fiber.StatusUnauthorized).JSON(dto.ApiResponse{
-			Code: fiber.StatusUnauthorized, Message: "Invalid signature",
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"responseCode":    "5000700",
+			"responseMessage": "Invalid payload",
 		})
 	}
-	if fail := ctrl.Checkout.HandleMidtransNotification(notif); fail != nil {
-		ctrl.Log.Warn().Str("order_id", notif.OrderID).Str("status", notif.TransactionStatus).Msg("Webhook handle failed")
-		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
+	if fail := ctrl.Checkout.HandlePGNotification(notif); fail != nil {
+		ctrl.Log.Warn().
+			Str("invoice", notif.Order.InvoiceNumber).
+			Str("status", notif.Transaction.Status).
+			Str("err", fail.Message).
+			Msg("PG webhook handle failed")
+		// Tetap 200 supaya PG tidak retry infinite — log warn saja.
+		return c.JSON(fiber.Map{
+			"responseCode":    "2000700",
+			"responseMessage": "Logged",
+		})
 	}
 	ctrl.Log.Info().
-		Str("order_id", notif.OrderID).
-		Str("status", notif.TransactionStatus).
-		Msg("Midtrans webhook processed OK")
-	return c.JSON(fiber.Map{"status": "ok"})
+		Str("invoice", notif.Order.InvoiceNumber).
+		Str("status", notif.Transaction.Status).
+		Str("channel", notif.Channel.ID).
+		Msg("PG webhook processed OK")
+	return c.JSON(fiber.Map{
+		"responseCode":    "2000700",
+		"responseMessage": "Success",
+	})
 }
 
 // BiteshipWebhook — public endpoint. Biteship POST setiap status change
