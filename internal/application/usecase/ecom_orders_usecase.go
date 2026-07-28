@@ -236,11 +236,16 @@ func (s *EcomOrdersService) GetDetail(userID, orderID string) (*dto.CustomerOrde
 		})
 	}
 
-	// Shipping
-	if order.ShippingCourier != nil {
+	// Shipping — prefer *_name (display friendly) untuk FE, fallback ke
+	// code kalau kolom baru NULL (order lama pre-migration 000061).
+	if order.ShippingCourierName != nil && *order.ShippingCourierName != "" {
+		detail.Shipping.Courier = *order.ShippingCourierName
+	} else if order.ShippingCourier != nil {
 		detail.Shipping.Courier = *order.ShippingCourier
 	}
-	if order.ShippingService != nil {
+	if order.ShippingServiceName != nil && *order.ShippingServiceName != "" {
+		detail.Shipping.ServiceName = *order.ShippingServiceName
+	} else if order.ShippingService != nil {
 		detail.Shipping.ServiceName = *order.ShippingService
 	}
 	if order.ShippingETD != nil {
@@ -248,6 +253,9 @@ func (s *EcomOrdersService) GetDetail(userID, orderID string) (*dto.CustomerOrde
 	}
 	if order.ShippingAWB != nil {
 		detail.Shipping.AWB = *order.ShippingAWB
+	}
+	if order.ShippingTrackingURL != nil {
+		detail.Shipping.TrackingURL = *order.ShippingTrackingURL
 	}
 	if order.BiteshipOrderID != nil {
 		detail.Shipping.BiteshipOrderID = *order.BiteshipOrderID

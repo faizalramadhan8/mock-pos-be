@@ -32,11 +32,16 @@ type ShippingRatesResponse struct {
 
 // ─── Checkout ─────────────────────────────────────────────────────────
 type CheckoutCreateRequest struct {
-	AddressID       string  `json:"address_id" validate:"required,uuid"`
-	ShippingCourier string  `json:"shipping_courier" validate:"required"`
-	ShippingService string  `json:"shipping_service" validate:"required"`
-	ShippingCost    float64 `json:"shipping_cost" validate:"gte=0"`
-	ShippingETD     string  `json:"shipping_etd"`
+	AddressID string `json:"address_id" validate:"required,uuid"`
+	// Courier + Service = CODE Biteship (mis. "sicepat"+"reg"). Wajib supaya
+	// downstream CreateBiteshipShipment berhasil call Biteship /v1/orders.
+	// *Name = display friendly untuk UI (mis. "SiCepat"+"Reguler"). Opsional.
+	ShippingCourier     string  `json:"shipping_courier" validate:"required"`
+	ShippingCourierName string  `json:"shipping_courier_name,omitempty"`
+	ShippingService     string  `json:"shipping_service" validate:"required"`
+	ShippingServiceName string  `json:"shipping_service_name,omitempty"`
+	ShippingCost        float64 `json:"shipping_cost" validate:"gte=0"`
+	ShippingETD         string  `json:"shipping_etd"`
 	Notes           string  `json:"notes,omitempty"`
 	VoucherCode     string  `json:"voucher_code,omitempty"` // opsional
 	// PG channel yang customer pilih di checkout page (bca/bri/qris/ovo/dst).
@@ -102,10 +107,16 @@ type CustomerOrderDetail struct {
 	Items []CustomerOrderItemDetail `json:"items"`
 
 	Shipping struct {
+		// Courier + ServiceName = DISPLAY-friendly (mis. "SiCepat"+"Reguler").
+		// FE render langsung. Code (sicepat/reg) tidak di-expose ke customer,
+		// disimpan di DB untuk downstream Biteship API.
 		Courier     string `json:"courier"`
 		ServiceName string `json:"service_name"`
 		ETD         string `json:"etd"`
 		AWB         string `json:"awb,omitempty"`
+		// TrackingURL = public Biteship link untuk customer klik "Lacak Paket".
+		// Sudah include peta + history — hemat CS "resi sudah tapi belum update".
+		TrackingURL     string `json:"tracking_url,omitempty"`
 		BiteshipOrderID string `json:"biteship_order_id,omitempty"` // admin-visible; kalau tidak kosong = auto-resi via Biteship API
 		Address     struct {
 			Label          string `json:"label"`

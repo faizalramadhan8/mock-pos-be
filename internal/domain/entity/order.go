@@ -34,13 +34,25 @@ type Order struct {
 	OrderSource             string     `gorm:"column:order_source;type:varchar(10);not null;default:pos" json:"order_source"`
 	EcomUserID              *string    `gorm:"column:ecom_user_id;type:varchar(36);null" json:"ecom_user_id,omitempty"`
 	ShippingAddressSnapshot *string    `gorm:"column:shipping_address_snapshot;type:json;null" json:"shipping_address_snapshot,omitempty"`
+	// ShippingCourier = CODE Biteship (mis. "sicepat", "jnt", "jne"). Sejak
+	// migration 000061 (28 Jul 2026) — sebelumnya isi display name yang bikin
+	// CreateBiteshipShipment reject. Display name pindah ke ShippingCourierName.
 	ShippingCourier         *string    `gorm:"column:shipping_courier;type:varchar(50);null" json:"shipping_courier,omitempty"`
+	ShippingCourierName     *string    `gorm:"column:shipping_courier_name;type:varchar(100);null" json:"shipping_courier_name,omitempty"`
+	// ShippingService = CODE Biteship (mis. "reg", "yes"). Display di *_name.
 	ShippingService         *string    `gorm:"column:shipping_service;type:varchar(50);null" json:"shipping_service,omitempty"`
+	ShippingServiceName     *string    `gorm:"column:shipping_service_name;type:varchar(100);null" json:"shipping_service_name,omitempty"`
 	ShippingCost            float64    `gorm:"column:shipping_cost;type:decimal(15,2);null;default:0" json:"shipping_cost,omitempty"`
 	VoucherCode             *string    `gorm:"column:voucher_code;type:varchar(50);null" json:"voucher_code,omitempty"`
 	VoucherDiscount         float64    `gorm:"column:voucher_discount;type:decimal(15,2);not null;default:0" json:"voucher_discount,omitempty"`
 	ShippingETD             *string    `gorm:"column:shipping_etd;type:varchar(50);null" json:"shipping_etd,omitempty"`
 	ShippingAWB             *string    `gorm:"column:shipping_awb;type:varchar(100);null" json:"shipping_awb,omitempty"`
+	// Public tracking URL dari Biteship (courier.link di response). Customer
+	// klik langsung buka page tracking kurir tanpa copy AWB manual.
+	ShippingTrackingURL     *string    `gorm:"column:shipping_tracking_url;type:varchar(500);null" json:"shipping_tracking_url,omitempty"`
+	// Biteship internal tracking_id — dipakai GET /v1/trackings/:id untuk
+	// manual sync kalau webhook missed.
+	ShippingTrackingID      *string    `gorm:"column:shipping_tracking_id;type:varchar(64);null" json:"shipping_tracking_id,omitempty"`
 	BiteshipOrderID         *string    `gorm:"column:biteship_order_id;type:varchar(64);null" json:"biteship_order_id,omitempty"`
 	EcomStatus              *string    `gorm:"column:ecom_status;type:varchar(30);null" json:"ecom_status,omitempty"`
 	// Waktu Biteship (atau admin manual) tandai "sudah sampai kurir".

@@ -225,6 +225,19 @@ func (s *EcomCheckoutService) CreateOrder(userID string, userEmail, userPhone, u
 	shippingETDPtr := &req.ShippingETD
 	ecomUserIDPtr := &userID
 	ecomStatusPtr := &ecomStatus
+	// Display name — fallback ke code kalau FE tidak kirim (backward compat
+	// untuk API caller lama). Cegah *_name kosong di DB → response kembali
+	// kosong → FE tampil tanpa label.
+	shippingCourierName := req.ShippingCourierName
+	if shippingCourierName == "" {
+		shippingCourierName = req.ShippingCourier
+	}
+	shippingServiceName := req.ShippingServiceName
+	if shippingServiceName == "" {
+		shippingServiceName = req.ShippingService
+	}
+	shippingCourierNamePtr := &shippingCourierName
+	shippingServiceNamePtr := &shippingServiceName
 
 	order := entity.Order{
 		ID:                      orderID,
@@ -242,7 +255,9 @@ func (s *EcomCheckoutService) CreateOrder(userID string, userEmail, userPhone, u
 		EcomUserID:              ecomUserIDPtr,
 		ShippingAddressSnapshot: &addrSnapshot,
 		ShippingCourier:         shippingCourierPtr,
+		ShippingCourierName:     shippingCourierNamePtr,
 		ShippingService:         shippingServicePtr,
+		ShippingServiceName:     shippingServiceNamePtr,
 		ShippingCost:            req.ShippingCost,
 		ShippingETD:             shippingETDPtr,
 		EcomStatus:              ecomStatusPtr,

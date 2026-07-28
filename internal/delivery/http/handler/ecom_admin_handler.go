@@ -262,6 +262,32 @@ func (ctrl *EcomAdminController) CreateBiteshipShipment(c *fiber.Ctx) error {
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Shipment Biteship dibuat", Body: resp})
 }
 
+// SyncBiteshipStatus — admin klik "Sync dari Biteship" saat webhook missed /
+// status stuck. Panggil GET /v1/orders/:id untuk fresh state.
+func (ctrl *EcomAdminController) SyncBiteshipStatus(c *fiber.Ctx) error {
+	id := c.Params("id")
+	claims := c.Locals("session").(*dto.JWTClaims)
+	resp, fail := ctrl.EcomOrdersSvc.SyncBiteshipStatus(id, claims.ID)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
+			Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message,
+		})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Status Biteship di-sync", Body: resp})
+}
+
+// GetBiteshipBalance — admin dashboard widget saldo Biteship. Alert kalau
+// balance < 100k supaya Bu Santi top-up sebelum order tetap gagal.
+func (ctrl *EcomAdminController) GetBiteshipBalance(c *fiber.Ctx) error {
+	balance, err := ctrl.EcomOrdersSvc.Biteship.GetBalance()
+	if err != nil {
+		return c.Status(fiber.StatusBadGateway).JSON(dto.ApiResponse{
+			Code: fiber.StatusBadGateway, Message: "Gagal ambil saldo", Error: err.Error(),
+		})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK", Body: balance})
+}
+
 func (ctrl *EcomAdminController) SetOrderShipping(c *fiber.Ctx) error {
 	id := c.Params("id")
 	var req dto.AdminSetShippingRequest

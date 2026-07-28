@@ -309,11 +309,16 @@ func buildEcomOrderDetail(order *entity.Order) *dto.CustomerOrderDetail {
 			Subtotal:  it.UnitPrice * float64(it.Quantity),
 		})
 	}
-	// Shipping
-	if order.ShippingCourier != nil {
+	// Shipping — prefer *_name (display) untuk FE, fallback ke code kalau
+	// order lama pre-migration 000061.
+	if order.ShippingCourierName != nil && *order.ShippingCourierName != "" {
+		detail.Shipping.Courier = *order.ShippingCourierName
+	} else if order.ShippingCourier != nil {
 		detail.Shipping.Courier = *order.ShippingCourier
 	}
-	if order.ShippingService != nil {
+	if order.ShippingServiceName != nil && *order.ShippingServiceName != "" {
+		detail.Shipping.ServiceName = *order.ShippingServiceName
+	} else if order.ShippingService != nil {
 		detail.Shipping.ServiceName = *order.ShippingService
 	}
 	if order.ShippingETD != nil {
@@ -321,6 +326,9 @@ func buildEcomOrderDetail(order *entity.Order) *dto.CustomerOrderDetail {
 	}
 	if order.ShippingAWB != nil {
 		detail.Shipping.AWB = *order.ShippingAWB
+	}
+	if order.ShippingTrackingURL != nil {
+		detail.Shipping.TrackingURL = *order.ShippingTrackingURL
 	}
 	if order.BiteshipOrderID != nil {
 		detail.Shipping.BiteshipOrderID = *order.BiteshipOrderID
@@ -372,6 +380,59 @@ func ptrString(p *string) string {
 		return ""
 	}
 	return *p
+}
+
+// normalizeCourierCompany — mapping display name → Biteship courier_company
+// code. Sejak migration 000061 semua order ecom baru simpan CODE, tapi
+// fungsi ini jadi safety net untuk order lama yang belum di-backfill / admin
+// input manual dari dashboard yang salah ketik.
+//
+// Biteship courier codes umum (docs: /v1/couriers):
+//   jne, jnt (J&T Express, BUKAN "jt"), sicepat, anteraja, ninja (BUKAN
+//   "ninjaexpress"), pos (Pos Indonesia, BUKAN "posindonesia"), tiki, lion,
+//   rex, wahana, sap, gojek, grab.
+func normalizeCourierCompany(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	// Sudah code (whitelist) — pass-through.
+	switch s {
+	case "jne", "jnt", "sicepat", "anteraja", "ninja", "pos", "tiki",
+		"lion", "rex", "wahana", "sap", "gojek", "grab", "idexpress",
+		"paxel", "sentral":
+		return s
+	}
+	// Display name → code.
+	switch {
+	case strings.Contains(s, "j&t"), strings.Contains(s, "jnt"),
+		strings.Contains(s, "j t express"), s == "jt":
+		return "jnt"
+	case strings.Contains(s, "sicepat"):
+		return "sicepat"
+	case strings.Contains(s, "jne"):
+		return "jne"
+	case strings.Contains(s, "anteraja"):
+		return "anteraja"
+	case strings.Contains(s, "ninja"):
+		return "ninja"
+	case strings.Contains(s, "pos indonesia"), s == "pos":
+		return "pos"
+	case strings.Contains(s, "tiki"):
+		return "tiki"
+	case strings.Contains(s, "lion parcel"), strings.Contains(s, "lionparcel"):
+		return "lion"
+	case strings.Contains(s, "id express"), strings.Contains(s, "idexpress"):
+		return "idexpress"
+	case strings.Contains(s, "paxel"):
+		return "paxel"
+	case strings.Contains(s, "wahana"):
+		return "wahana"
+	case strings.Contains(s, "gojek"), strings.Contains(s, "gosend"):
+		return "gojek"
+	case strings.Contains(s, "grab"):
+		return "grab"
+	}
+	// Fallback — strip spaces + &, coba as-is.
+	stripped := strings.ReplaceAll(strings.ReplaceAll(s, " ", ""), "&", "")
+	return stripped
 }
 
 // normalizeCourierService — mapping display name → Biteship service code.
@@ -474,14 +535,13 @@ func (s *EcomAdminOrdersService) CreateBiteshipShipment(orderID, changedBy strin
 	}, ", ")
 	destNote := get("notes")
 
-	// Courier code — order.ShippingCourier disimpan sebagai display name
-	// (mis. "JNE"), tapi Biteship API accept lowercase code ("jne"). Simple
-	// downcase — kalau nanti ada courier dengan multi-word, tambah mapper.
+	// Courier + Service = CODE Biteship langsung (sejak migration 000061).
+	// Backward-compat: kalau isi masih display name (order lama pre-migration),
+	// normalize helper convert. Setelah backfill migration 000061, semua order
+	// ecom seharusnya sudah code — normalize jadi safety net.
 	courierCode := ""
 	if order.ShippingCourier != nil {
-		courierCode = strings.ToLower(strings.ReplaceAll(*order.ShippingCourier, " ", ""))
-		// Common mapping — Biteship pakai j&t → jnt, sicepat OK, dst.
-		courierCode = strings.ReplaceAll(courierCode, "&", "")
+		courierCode = normalizeCourierCompany(*order.ShippingCourier)
 	}
 	if courierCode == "" {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Order tidak punya kurir terpilih"}
@@ -491,23 +551,45 @@ func (s *EcomAdminOrdersService) CreateBiteshipShipment(orderID, changedBy strin
 		courierService = normalizeCourierService(*order.ShippingService)
 	}
 
-	// Items untuk insurance calc.
+	// Preload product weight untuk items (Bu Santi 28 Jul 2026). Sebelumnya
+	// hardcode 200g bikin dimensional weight salah untuk item berat (tepung
+	// 1kg, minyak 900g). Fallback tetap 200g kalau produk tidak set weight.
+	productIDs := make([]string, 0, len(order.Items))
+	for _, it := range order.Items {
+		if it.ProductID != "" {
+			productIDs = append(productIDs, it.ProductID)
+		}
+	}
+	weightByProduct := map[string]int{}
+	if len(productIDs) > 0 {
+		var prods []entity.Product
+		s.DB.Select("id, ecom_weight_grams").Where("id IN ?", productIDs).Find(&prods)
+		for _, p := range prods {
+			if p.EcomWeightGrams != nil && *p.EcomWeightGrams > 0 {
+				weightByProduct[p.ID] = *p.EcomWeightGrams
+			}
+		}
+	}
+
+	// Items untuk insurance calc + Biteship dimensional weight.
 	items := make([]biteship.Item, 0, len(order.Items))
 	for _, it := range order.Items {
 		if it.ProductID == "" {
 			continue
 		}
-		// Weight per unit tidak di-snapshot di order_items — fallback 200g
-		// (Biteship butuh angka, TIDAK boleh 0). Kalau nanti weight critical,
-		// snapshot ke order_items.
-		// Dimensi (l/w/h) juga fallback default supaya kurir yang hitung
-		// dimensional weight (JNE, J&T) tidak reject request. Angka konservatif
-		// untuk bahan kue dry pack.
+		weight := 200 // fallback konservatif untuk bahan kue dry pack
+		if w, ok := weightByProduct[it.ProductID]; ok {
+			weight = w
+		}
+		// Dimensi (l/w/h) hardcoded default supaya kurir yang hitung
+		// dimensional weight (JNE, J&T) tidak reject request. Bahan kue rata
+		// kemasan mirip; kalau ada produk oversize nanti tambah kolom dimensi.
 		items = append(items, biteship.Item{
 			Name:        it.Name,
 			Description: it.Name,
+			Category:    "food", // bahan kue — cegah reject di kurir Lion/Pos untuk aturan makanan
 			Value:       int(it.UnitPrice),
-			Weight:      200,
+			Weight:      weight,
 			Quantity:    it.Quantity,
 			Length:      15,
 			Width:       10,
@@ -550,6 +632,12 @@ func (s *EcomAdminOrdersService) CreateBiteshipShipment(orderID, changedBy strin
 	if resp.Waybill != "" {
 		updates["shipping_awb"] = resp.Waybill
 	}
+	if resp.TrackingURL != "" {
+		updates["shipping_tracking_url"] = resp.TrackingURL
+	}
+	if resp.TrackingID != "" {
+		updates["shipping_tracking_id"] = resp.TrackingID
+	}
 	if err := s.DB.Model(&entity.Order{}).Where("id = ?", orderID).Updates(updates).Error; err != nil {
 		s.Log.Error().Err(err).Str("order_id", orderID).Msg("save biteship_order_id failed")
 		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Order Biteship dibuat tapi gagal simpan id. Cek log server."}
@@ -589,6 +677,26 @@ func (s *EcomAdminOrdersService) HandleBiteshipWebhook(payload BiteshipWebhookPa
 	if payload.WaybillID != "" {
 		updates["shipping_awb"] = payload.WaybillID
 	}
+	if payload.TrackingID != "" {
+		updates["shipping_tracking_id"] = payload.TrackingID
+	}
+	if payload.TrackingURL != "" {
+		updates["shipping_tracking_url"] = payload.TrackingURL
+	}
+
+	// Event `order.price` — Biteship charge tambahan karena real weight >
+	// declared. Log warn + alert admin manual. Cegah margin ongkir tergerus
+	// tanpa audit. Kolom `shipping_cost` di-adjust supaya dashboard cashflow
+	// akurat.
+	if payload.Event == "order.price" && payload.Price > 0 {
+		s.Log.Warn().
+			Str("order_id", order.ID).
+			Float64("old_cost", order.ShippingCost).
+			Int("new_price", payload.Price).
+			Msg("biteship price adjustment — real weight > declared, saldo terpotong tambahan")
+		// Simpan price baru sebagai shipping_cost real supaya Reports akurat.
+		updates["shipping_cost"] = float64(payload.Price)
+	}
 
 	// Map Biteship status → ecom_status kita.
 	// Biteship status: allocated, picking_up, picked, dropping_off, delivered,
@@ -621,24 +729,91 @@ func (s *EcomAdminOrdersService) HandleBiteshipWebhook(payload BiteshipWebhookPa
 	return nil
 }
 
+// SyncBiteshipStatus — admin panel tombol "Sync dari Biteship". Fallback
+// kalau webhook missed (server down, IP block, deploy). Panggil GET /orders/:id
+// untuk fresh status + waybill + tracking URL. Update kolom terkait di DB.
+//
+// Bu Santi 28 Jul 2026: cegah order stuck di 'processing' selamanya walau
+// resi sudah 'delivered' — sekarang admin bisa refresh dengan 1 klik.
+func (s *EcomAdminOrdersService) SyncBiteshipStatus(orderID, changedBy string) (*dto.CustomerOrderDetail, *dto.ApiError) {
+	var order entity.Order
+	if err := s.DB.Where("id = ? AND order_source = 'ecom' AND deleted_at IS NULL", orderID).First(&order).Error; err != nil {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Order tidak ditemukan"}
+	}
+	if order.BiteshipOrderID == nil || *order.BiteshipOrderID == "" {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Order belum di-generate resi Biteship"}
+	}
+
+	tracking, err := s.Biteship.GetOrder(*order.BiteshipOrderID)
+	if err != nil {
+		s.Log.Error().Err(err).Str("order_id", orderID).Msg("biteship sync GetOrder failed")
+		return nil, &dto.ApiError{StatusCode: fiber.ErrBadGateway, Message: "Gagal ambil status dari Biteship: " + err.Error()}
+	}
+
+	updates := map[string]interface{}{}
+	if tracking.WaybillID != "" && (order.ShippingAWB == nil || *order.ShippingAWB != tracking.WaybillID) {
+		updates["shipping_awb"] = tracking.WaybillID
+	}
+	if tracking.Link != "" && (order.ShippingTrackingURL == nil || *order.ShippingTrackingURL != tracking.Link) {
+		updates["shipping_tracking_url"] = tracking.Link
+	}
+	if tracking.Status != "" {
+		mapped := mapBiteshipStatus(tracking.Status, ptrString(order.EcomStatus))
+		if mapped != "" && (order.EcomStatus == nil || *order.EcomStatus != mapped) {
+			updates["ecom_status"] = mapped
+			if mapped == "delivered" {
+				updates["ecom_delivered_at"] = time.Now()
+			}
+		}
+	}
+
+	if len(updates) > 0 {
+		if err := s.DB.Model(&entity.Order{}).Where("id = ?", orderID).Updates(updates).Error; err != nil {
+			s.Log.Error().Err(err).Str("order_id", orderID).Msg("biteship sync update failed")
+			return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Gagal simpan hasil sync"}
+		}
+	}
+
+	s.Log.Info().
+		Str("order_id", orderID).
+		Str("biteship_status", tracking.Status).
+		Int("updates", len(updates)).
+		Str("by", changedBy).
+		Msg("biteship status synced manual")
+
+	return s.GetDetail(orderID)
+}
+
 // BiteshipWebhookPayload — subset field yang kita butuh dari webhook.
 // Biteship pakai flat structure di top-level plus optional nested `courier`.
+// 3 event resmi: "order.status", "order.waybill_id", "order.price".
 type BiteshipWebhookPayload struct {
-	Event       string `json:"event"`        // "order.status" | "order.waybill_id"
+	Event       string `json:"event"`        // "order.status" | "order.waybill_id" | "order.price"
 	OrderID     string `json:"order_id"`     // Biteship order id
 	ReferenceID string `json:"reference_id"` // = orderID kita (yang di-set saat CreateOrder)
 	Status      string `json:"status"`
 	WaybillID   string `json:"waybill_id"`
+	TrackingID  string `json:"tracking_id"`
+	TrackingURL string `json:"link"` // Biteship pakai "link" untuk public tracking URL
+	Price       int    `json:"price"` // untuk event order.price (weight adjustment)
 	Courier     struct {
-		Company   string `json:"company"`
-		WaybillID string `json:"waybill_id"`
+		Company    string `json:"company"`
+		WaybillID  string `json:"waybill_id"`
+		TrackingID string `json:"tracking_id"`
+		Link       string `json:"link"`
 	} `json:"courier"`
 }
 
-// Normalize — pindahkan nested courier.waybill_id ke top-level kalau kosong.
+// Normalize — pindahkan nested courier.* ke top-level kalau kosong.
 func (p *BiteshipWebhookPayload) Normalize() {
 	if p.WaybillID == "" && p.Courier.WaybillID != "" {
 		p.WaybillID = p.Courier.WaybillID
+	}
+	if p.TrackingID == "" && p.Courier.TrackingID != "" {
+		p.TrackingID = p.Courier.TrackingID
+	}
+	if p.TrackingURL == "" && p.Courier.Link != "" {
+		p.TrackingURL = p.Courier.Link
 	}
 }
 

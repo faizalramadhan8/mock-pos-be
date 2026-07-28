@@ -93,12 +93,16 @@ type Rate struct {
 type Item struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
-	Value       int    `json:"value"`    // harga per unit (Rp)
-	Weight      int    `json:"weight"`   // per unit (gram)
-	Quantity    int    `json:"quantity"`
-	Length      int    `json:"length,omitempty"`
-	Width       int    `json:"width,omitempty"`
-	Height      int    `json:"height,omitempty"`
+	// Category: penting untuk kurir tertentu (Lion, Pos, kurir udara) yang
+	// enforce aturan "food/consumable". Values Biteship: fashion, food,
+	// beauty, electronic, others. Bahan kue = "food".
+	Category string `json:"category,omitempty"`
+	Value    int    `json:"value"`  // harga per unit (Rp)
+	Weight   int    `json:"weight"` // per unit (gram)
+	Quantity int    `json:"quantity"`
+	Length   int    `json:"length,omitempty"`
+	Width    int    `json:"width,omitempty"`
+	Height   int    `json:"height,omitempty"`
 }
 
 type RateRequest struct {
@@ -199,16 +203,22 @@ func (c *Client) GetRates(req RateRequest) ([]Rate, error) {
 }
 
 // itemsForRequest — kalau caller supply real items pakai itu, else buat
-// 1 aggregated line item pakai total weight (backward compat).
+// 1 aggregated line item pakai total weight (backward compat). Category
+// default "food" — toko Bu Santi khusus bahan kue.
 func (c *Client) itemsForRequest(req RateRequest) []map[string]interface{} {
 	if len(req.Items) > 0 {
 		out := make([]map[string]interface{}, 0, len(req.Items))
 		for _, it := range req.Items {
+			cat := it.Category
+			if cat == "" {
+				cat = "food"
+			}
 			m := map[string]interface{}{
 				"name":     it.Name,
 				"value":    it.Value,
 				"weight":   it.Weight,
 				"quantity": it.Quantity,
+				"category": cat,
 			}
 			if it.Description != "" {
 				m["description"] = it.Description
@@ -236,6 +246,7 @@ func (c *Client) itemsForRequest(req RateRequest) []map[string]interface{} {
 			"value":    10000,
 			"weight":   w,
 			"quantity": 1,
+			"category": "food",
 		},
 	}
 }
@@ -288,6 +299,8 @@ type CreateOrderResponse struct {
 	Status      string `json:"status"`
 	CourierCode string `json:"-"` // populated dari nested pricing
 	Waybill     string `json:"-"` // biasanya baru terisi setelah pickup — kosong di awal
+	TrackingID  string `json:"-"` // untuk GetTracking API
+	TrackingURL string `json:"-"` // public link untuk customer track paket
 	Price       int    `json:"-"` // final ongkir dari Biteship
 }
 
@@ -364,16 +377,18 @@ func (c *Client) CreateOrder(req CreateOrderRequest) (*CreateOrderResponse, erro
 		return nil, fmt.Errorf("biteship create order (%d): %s", resp.StatusCode, string(respBody))
 	}
 
-	// Response Biteship punya struktur nested — kita cuma butuh id + status.
+	// Response Biteship punya struktur nested — kita ambil id + status + tracking.
 	var raw struct {
 		Success bool   `json:"success"`
 		Object  string `json:"object"`
 		ID      string `json:"id"`
 		Status  string `json:"status"`
 		Courier struct {
-			WaybillID string `json:"waybill_id"`
-			Company   string `json:"company"`
-			Type      string `json:"type"`
+			WaybillID  string `json:"waybill_id"`
+			TrackingID string `json:"tracking_id"`
+			Company    string `json:"company"`
+			Type       string `json:"type"`
+			Link       string `json:"link"`
 		} `json:"courier"`
 		Price int `json:"price"`
 	}
@@ -388,21 +403,37 @@ func (c *Client) CreateOrder(req CreateOrderRequest) (*CreateOrderResponse, erro
 		Status:      raw.Status,
 		CourierCode: raw.Courier.Company,
 		Waybill:     raw.Courier.WaybillID,
+		TrackingID:  raw.Courier.TrackingID,
+		TrackingURL: raw.Courier.Link,
 		Price:       raw.Price,
 	}, nil
 }
 
 // CancelOrder — POST /v1/orders/:id/cancel. Dipanggil kalau admin batalkan
 // order yang sudah terlanjur di-create di Biteship (belum di-pickup kurir).
-func (c *Client) CancelOrder(biteshipOrderID string) error {
+//
+// Biteship 28 Jul 2026 update: body wajib `cancellation_reason_code` (dari
+// GET /v1/orders/cancellation_reasons). Value valid: change_courier,
+// pickup_delay, change_address, others. Kita pass "others" + reason bebas
+// dari admin — cover semua kasus tanpa harus prompt dropdown.
+func (c *Client) CancelOrder(biteshipOrderID, reason string) error {
 	if !c.IsConfigured() {
 		return nil // silent no-op — order tidak pernah di-create di real Biteship
 	}
-	httpReq, err := http.NewRequest("POST", "https://api.biteship.com/v1/orders/"+biteshipOrderID+"/cancel", nil)
+	if reason == "" {
+		reason = "Cancelled by seller"
+	}
+	body := map[string]interface{}{
+		"cancellation_reason_code": "others",
+		"cancellation_reason":      reason,
+	}
+	buf, _ := json.Marshal(body)
+	httpReq, err := http.NewRequest("POST", "https://api.biteship.com/v1/orders/"+biteshipOrderID+"/cancel", bytes.NewReader(buf))
 	if err != nil {
 		return err
 	}
 	httpReq.Header.Set("Authorization", c.APIKey)
+	httpReq.Header.Set("Content-Type", "application/json")
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
 		return err
@@ -413,6 +444,107 @@ func (c *Client) CancelOrder(biteshipOrderID string) error {
 		return fmt.Errorf("biteship cancel (%d): %s", resp.StatusCode, string(b))
 	}
 	return nil
+}
+
+// GetTracking — GET /v1/trackings/:tracking_id. Ambil status resi live dari
+// Biteship, dipakai admin "Sync status manual" kalau webhook missed. tracking_id
+// dari response CreateOrder (courier.tracking_id) atau dari webhook payload.
+// Kalau caller cuma punya order.id (Biteship order_id), pakai GetOrder dulu.
+type TrackingStatus struct {
+	OrderID   string `json:"order_id"`
+	WaybillID string `json:"waybill_id"`
+	Courier   string `json:"courier"`
+	Status    string `json:"status"`
+	Link      string `json:"link"`
+	History   []struct {
+		Status    string `json:"status"`
+		Note      string `json:"note"`
+		UpdatedAt string `json:"updated_at"`
+	} `json:"history"`
+}
+
+func (c *Client) GetOrder(biteshipOrderID string) (*TrackingStatus, error) {
+	if !c.IsConfigured() {
+		return nil, fmt.Errorf("biteship not configured")
+	}
+	httpReq, err := http.NewRequest("GET", "https://api.biteship.com/v1/orders/"+biteshipOrderID, nil)
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Authorization", c.APIKey)
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("biteship get order (%d): %s", resp.StatusCode, string(respBody))
+	}
+	var raw struct {
+		Success bool   `json:"success"`
+		ID      string `json:"id"`
+		Status  string `json:"status"`
+		Courier struct {
+			WaybillID  string `json:"waybill_id"`
+			TrackingID string `json:"tracking_id"`
+			Company    string `json:"company"`
+			Link       string `json:"link"`
+			History    []struct {
+				Status    string `json:"status"`
+				Note      string `json:"note"`
+				UpdatedAt string `json:"updated_at"`
+			} `json:"history"`
+		} `json:"courier"`
+	}
+	if err := json.Unmarshal(respBody, &raw); err != nil {
+		return nil, fmt.Errorf("biteship get order decode: %w", err)
+	}
+	return &TrackingStatus{
+		OrderID:   raw.ID,
+		WaybillID: raw.Courier.WaybillID,
+		Courier:   raw.Courier.Company,
+		Status:    raw.Status,
+		Link:      raw.Courier.Link,
+		History:   raw.Courier.History,
+	}, nil
+}
+
+// GetBalance — GET /v1/balance. Admin monitor saldo Biteship + trigger alert
+// kalau di bawah threshold. Panggilan CreateOrder gagal 402 kalau saldo tidak
+// cukup — Bu Santi harus top-up manual di dashboard.
+type Balance struct {
+	Amount   float64 `json:"balance"`
+	Currency string  `json:"currency"`
+}
+
+func (c *Client) GetBalance() (*Balance, error) {
+	if !c.IsConfigured() {
+		return nil, fmt.Errorf("biteship not configured")
+	}
+	httpReq, err := http.NewRequest("GET", "https://api.biteship.com/v1/balance", nil)
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Authorization", c.APIKey)
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("biteship balance (%d): %s", resp.StatusCode, string(respBody))
+	}
+	var raw struct {
+		Success  bool    `json:"success"`
+		Balance  float64 `json:"balance"`
+		Currency string  `json:"currency"`
+	}
+	if err := json.Unmarshal(respBody, &raw); err != nil {
+		return nil, fmt.Errorf("biteship balance decode: %w", err)
+	}
+	return &Balance{Amount: raw.Balance, Currency: raw.Currency}, nil
 }
 
 // VerifyWebhookSignature — HMAC-SHA256 verify header sesuai config webhook di

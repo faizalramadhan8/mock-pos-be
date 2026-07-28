@@ -41,6 +41,10 @@ func UseEcomAdminRouter(ctx context.Context, r fiber.Router) {
 	gated.Post("/orders/:id/shipping", ctrl.SetOrderShipping)
 	// Sprint 3 — Biteship auto-resi.
 	gated.Post("/orders/:id/biteship-create", ctrl.CreateBiteshipShipment)
+	// 28 Jul 2026 — admin sync status manual (fallback webhook missed).
+	gated.Post("/orders/:id/biteship-sync", ctrl.SyncBiteshipStatus)
+	// Balance widget (dashboard).
+	gated.Get("/biteship/balance", ctrl.GetBiteshipBalance)
 	// Sprint 5 — Voucher/Promo CRUD (admin only).
 	gated.Get("/vouchers", ctrl.ListVouchers)
 	gated.Post("/vouchers", ctrl.CreateVoucher)
