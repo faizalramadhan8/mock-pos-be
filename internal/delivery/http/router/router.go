@@ -4,11 +4,17 @@ import (
 	"context"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/faizalramadhan/pos-be/internal/delivery/http/handler"
 )
 
 func UseRouter(ctx context.Context, r fiber.Router) {
 
 	prefix := r.Group("/api/v1")
+
+	// Sitemap — mounted di root supaya bisa di-proxy dari nginx sebagai
+	// /shop/sitemap.xml. Bukan di /api/v1 supaya URL bersih untuk crawler.
+	sitemap := handler.NewSitemapController(ctx)
+	r.Get("/sitemap.xml", sitemap.Sitemap)
 
 	// Auth & Users
 	UseAuthRouter(ctx, prefix)

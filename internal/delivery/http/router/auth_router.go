@@ -26,6 +26,15 @@ func UseAuthRouter(ctx context.Context, r fiber.Router) {
 	authGroup.Get("/session", auth.AllowAll(), ctrl.GetProfile)
 	authGroup.Post("/change-password", auth.AllowAll(), ctrl.ChangePassword)
 
+	// Customer self-service (Sprint 2) — auth required, self-scoped (user
+	// ID diambil dari JWT, tidak dari URL).
+	authGroup.Patch("/me", auth.AllowAll(), ctrl.UpdateProfile)
+	authGroup.Post("/me/password", auth.AllowAll(), ctrl.ChangeMyPassword)
+
+	// Password reset via email OTP (public — customer lupa password).
+	authGroup.Post("/password-reset/request", ctrl.RequestPasswordResetOTP)
+	authGroup.Post("/password-reset/confirm", ctrl.ConfirmPasswordResetOTP)
+
 	// Device binding: status polling is public (no token yet — user is still
 	// trying to login). Approve/reject links are tapped by owner from
 	// WhatsApp; auth is via the single-use token embedded in the URL.

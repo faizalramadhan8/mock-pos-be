@@ -37,8 +37,11 @@ type Order struct {
 	ShippingCourier         *string    `gorm:"column:shipping_courier;type:varchar(50);null" json:"shipping_courier,omitempty"`
 	ShippingService         *string    `gorm:"column:shipping_service;type:varchar(50);null" json:"shipping_service,omitempty"`
 	ShippingCost            float64    `gorm:"column:shipping_cost;type:decimal(15,2);null;default:0" json:"shipping_cost,omitempty"`
+	VoucherCode             *string    `gorm:"column:voucher_code;type:varchar(50);null" json:"voucher_code,omitempty"`
+	VoucherDiscount         float64    `gorm:"column:voucher_discount;type:decimal(15,2);not null;default:0" json:"voucher_discount,omitempty"`
 	ShippingETD             *string    `gorm:"column:shipping_etd;type:varchar(50);null" json:"shipping_etd,omitempty"`
 	ShippingAWB             *string    `gorm:"column:shipping_awb;type:varchar(100);null" json:"shipping_awb,omitempty"`
+	BiteshipOrderID         *string    `gorm:"column:biteship_order_id;type:varchar(64);null" json:"biteship_order_id,omitempty"`
 	EcomStatus              *string    `gorm:"column:ecom_status;type:varchar(30);null" json:"ecom_status,omitempty"`
 	PaymentSnapToken        *string    `gorm:"column:payment_snap_token;type:varchar(100);null" json:"payment_snap_token,omitempty"`
 	PaymentReference        *string    `gorm:"column:payment_reference;type:varchar(100);null" json:"payment_reference,omitempty"`

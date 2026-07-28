@@ -52,9 +52,27 @@ type Config struct {
 	BiteshipOriginPostal string `koanf:"BITESHIP_ORIGIN_POSTAL_CODE"`
 	BiteshipCouriers     string `koanf:"BITESHIP_COURIERS"` // comma-separated; default "jne,jnt,sicepat,anteraja"
 
+	// Biteship Order API — untuk buat shipping order beneran + trigger pickup.
+	// Origin (shipper) info di-attach ke setiap request Create Order.
+	// Kalau salah satu kosong = FE tampil warning "setup dulu di admin".
+	BiteshipOriginName    string `koanf:"BITESHIP_ORIGIN_NAME"`    // "Toko Bahan Kue Santi"
+	BiteshipOriginPhone   string `koanf:"BITESHIP_ORIGIN_PHONE"`   // "628123..." E.164
+	BiteshipOriginAddress string `koanf:"BITESHIP_ORIGIN_ADDRESS"` // full alamat toko
+	BiteshipOriginNote    string `koanf:"BITESHIP_ORIGIN_NOTE"`    // "Ruko PG II no 29"
+	// Webhook secret — Biteship kirim header signature; kita verify SHA256 HMAC.
+	// Kosong = skip verify (dev mode). Set random 32-char string untuk prod.
+	BiteshipWebhookSecret string `koanf:"BITESHIP_WEBHOOK_SECRET"`
+
 	// Fallback shipping stub (kalau BITESHIP_API_KEY kosong).
 	// Rate per kg flat untuk MVP validate demand.
 	ShippingFlatBaseRate int `koanf:"SHIPPING_FLAT_BASE_RATE"` // default 15000
+
+	// Brevo (formerly Sendinblue) — transactional email untuk OTP reset
+	// password + order confirmation. Free tier: 300 email/hari.
+	// Kalau kosong → OTP di-log ke console (dev mode fallback).
+	BrevoAPIKey      string `koanf:"BREVO_API_KEY"`
+	BrevoSenderEmail string `koanf:"BREVO_SENDER_EMAIL"` // e.g. noreply@tbksanti.id
+	BrevoSenderName  string `koanf:"BREVO_SENDER_NAME"`  // e.g. "TBK Santi"
 }
 
 func (c *Config) GetGormAddress() string {

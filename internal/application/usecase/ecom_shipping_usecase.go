@@ -23,16 +23,28 @@ func NewEcomShippingService(ctx context.Context, db *gorm.DB) *EcomShippingServi
 	logger := ctx.Value(enum.LoggerCtxKey).(*zerolog.Logger)
 	cfg := ctx.Value(enum.ConfigCtxKey).(*config.Config)
 	return &EcomShippingService{
-		DB:  db,
-		Log: logger,
-		Biteship: biteship.NewClient(
-			cfg.BiteshipAPIKey,
-			cfg.BiteshipOriginArea,
-			cfg.BiteshipOriginPostal,
-			cfg.BiteshipCouriers,
-			cfg.ShippingFlatBaseRate,
-		),
+		DB:       db,
+		Log:      logger,
+		Biteship: NewBiteshipClient(cfg),
 	}
+}
+
+// NewBiteshipClient — shared factory supaya multiple service pakai config
+// yang sama (shipping rate + admin orders create + webhook verify).
+func NewBiteshipClient(cfg *config.Config) *biteship.Client {
+	return biteship.NewClient(
+		cfg.BiteshipAPIKey,
+		cfg.BiteshipOriginArea,
+		cfg.BiteshipOriginPostal,
+		cfg.BiteshipCouriers,
+		cfg.ShippingFlatBaseRate,
+	).WithShipper(
+		cfg.BiteshipOriginName,
+		cfg.BiteshipOriginPhone,
+		cfg.BiteshipOriginAddress,
+		cfg.BiteshipOriginNote,
+		cfg.BiteshipWebhookSecret,
+	)
 }
 
 // GetRates — kalkulasi shipping option berdasar alamat + cart total berat.
@@ -43,34 +55,48 @@ func (s *EcomShippingService) GetRates(userID string, req dto.ShippingRateReques
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Alamat tidak ditemukan"}
 	}
 
-	// Cart → line items untuk Biteship (matches Postman items shape).
-	var cart []entity.EcomCartItem
-	if err := s.DB.Preload("Product").Where("user_id = ?", userID).Find(&cart).Error; err != nil {
-		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to fetch cart"}
-	}
-	items := make([]biteship.Item, 0, len(cart))
+	// Items untuk Biteship — bisa dari 3 source (sama pattern seperti CreateOrder):
+	//   1. BuyNowItems (bypass cart, dari PDP)
+	//   2. SelectedItemIDs (partial cart)
+	//   3. Default: seluruh cart
+	items := make([]biteship.Item, 0)
 	totalWeight := 0
-	for _, c := range cart {
-		if c.Product == nil {
-			continue
+
+	appendFromProduct := func(p *entity.Product, qty int) {
+		if p == nil {
+			return
 		}
-		// Berat per unit — fallback 200g kalau admin belum set.
 		w := 200
-		if c.Product.EcomWeightGrams != nil && *c.Product.EcomWeightGrams > 0 {
-			w = *c.Product.EcomWeightGrams
+		if p.EcomWeightGrams != nil && *p.EcomWeightGrams > 0 {
+			w = *p.EcomWeightGrams
 		}
-		// Harga per unit untuk value (dipakai insurance calc kurir).
-		value := int(c.Product.SellingPrice)
-		if c.Product.EcomPrice != nil {
-			value = int(*c.Product.EcomPrice)
+		value := int(p.SellingPrice)
+		if p.EcomPrice != nil {
+			value = int(*p.EcomPrice)
 		}
-		items = append(items, biteship.Item{
-			Name:     c.Product.Name,
-			Value:    value,
-			Weight:   w,
-			Quantity: c.Quantity,
-		})
-		totalWeight += w * c.Quantity
+		items = append(items, biteship.Item{Name: p.Name, Value: value, Weight: w, Quantity: qty})
+		totalWeight += w * qty
+	}
+
+	if len(req.BuyNowItems) > 0 {
+		for _, bn := range req.BuyNowItems {
+			var p entity.Product
+			if err := s.DB.Where("id = ? AND deleted_at IS NULL", bn.ProductID).First(&p).Error; err == nil {
+				appendFromProduct(&p, bn.Quantity)
+			}
+		}
+	} else {
+		var cart []entity.EcomCartItem
+		q := s.DB.Preload("Product").Where("user_id = ?", userID)
+		if len(req.SelectedItemIDs) > 0 {
+			q = q.Where("id IN ?", req.SelectedItemIDs)
+		}
+		if err := q.Find(&cart).Error; err != nil {
+			return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to fetch cart"}
+		}
+		for _, c := range cart {
+			appendFromProduct(c.Product, c.Quantity)
+		}
 	}
 	if totalWeight == 0 {
 		totalWeight = 1000

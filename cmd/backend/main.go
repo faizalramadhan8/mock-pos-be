@@ -115,8 +115,12 @@ func main() {
 		Bool("midtrans_configured", cfg.MidtransServerKey != "").
 		Bool("midtrans_prod", cfg.MidtransIsProd).
 		Bool("biteship_configured", cfg.BiteshipAPIKey != "").
+		Bool("biteship_can_create_order", cfg.BiteshipAPIKey != "" && cfg.BiteshipOriginName != "" && cfg.BiteshipOriginPhone != "" && cfg.BiteshipOriginAddress != "").
+		Bool("biteship_webhook_verified", cfg.BiteshipWebhookSecret != "").
 		Str("biteship_origin_area", cfg.BiteshipOriginArea).
 		Str("biteship_origin_postal", cfg.BiteshipOriginPostal).
+		Bool("brevo_configured", cfg.BrevoAPIKey != "").
+		Str("brevo_sender", cfg.BrevoSenderEmail).
 		Msg("ecom integrations")
 
 	app := fiber.New(fiber.Config{

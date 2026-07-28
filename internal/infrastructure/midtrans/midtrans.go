@@ -2,7 +2,9 @@ package midtrans
 
 import (
 	"bytes"
+	"crypto/sha512"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -125,6 +127,24 @@ func (c *Client) CreateSnapToken(req SnapRequest) (*SnapResponse, error) {
 		return nil, fmt.Errorf("midtrans error (%d): %v", resp.StatusCode, snapResp.ErrorMsg)
 	}
 	return &snapResp, nil
+}
+
+// VerifySignature — cek signature_key dari webhook Midtrans authentic.
+// Formula: SHA512(order_id + status_code + gross_amount + server_key)
+// Docs: https://docs.midtrans.com/reference/http-notification-and-signature-key
+//
+// Return true kalau:
+//   - Client belum configured (stub mode) — dev mode auto-pass
+//   - Signature match
+// Return false kalau live mode dan hash tidak match (potensi spoofing).
+func (c *Client) VerifySignature(orderID, statusCode, grossAmount, signature string) bool {
+	if !c.IsConfigured() {
+		return true // stub mode — bypass, tidak ada real signature dari sandbox
+	}
+	raw := orderID + statusCode + grossAmount + c.ServerKey
+	sum := sha512.Sum512([]byte(raw))
+	expected := hex.EncodeToString(sum[:])
+	return expected == signature
 }
 
 // Notification — payload dari webhook. Handler subset — Midtrans kirim banyak

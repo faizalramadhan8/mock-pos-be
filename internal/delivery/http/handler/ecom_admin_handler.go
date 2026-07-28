@@ -22,6 +22,8 @@ type EcomAdminController struct {
 	AuthService     *usecase.AuthService
 	EcomAdminSvc    *usecase.EcomAdminService
 	EcomCategorySvc *usecase.EcomCategoryService
+	EcomOrdersSvc   *usecase.EcomAdminOrdersService
+	EcomVoucherSvc  *usecase.EcomVoucherService
 }
 
 func NewEcomAdminController(ctx context.Context) *EcomAdminController {
@@ -32,6 +34,8 @@ func NewEcomAdminController(ctx context.Context) *EcomAdminController {
 		AuthService:     usecase.NewAuthService(ctx, db),
 		EcomAdminSvc:    usecase.NewEcomAdminService(ctx, db),
 		EcomCategorySvc: usecase.NewEcomCategoryService(ctx, db),
+		EcomOrdersSvc:   usecase.NewEcomAdminOrdersService(ctx, db),
+		EcomVoucherSvc:  usecase.NewEcomVoucherService(ctx, db),
 	}
 }
 
@@ -188,4 +192,143 @@ func (ctrl *EcomAdminController) DeleteCategory(c *fiber.Ctx) error {
 		})
 	}
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Category deleted"})
+}
+
+// ─── Ecom Admin Orders (Sprint 1) ────────────────────────────────────
+
+func (ctrl *EcomAdminController) ListOrders(c *fiber.Ctx) error {
+	status := c.Query("status", "")
+	search := c.Query("search", "")
+	cursor := c.Query("cursor", "")
+	limit := c.QueryInt("limit", 50)
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	resp, fail := ctrl.EcomOrdersSvc.List(status, search, cursor, limit)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
+			Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message,
+		})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK", Body: resp})
+}
+
+func (ctrl *EcomAdminController) GetOrder(c *fiber.Ctx) error {
+	id := c.Params("id")
+	resp, fail := ctrl.EcomOrdersSvc.GetDetail(id)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
+			Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message,
+		})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK", Body: resp})
+}
+
+func (ctrl *EcomAdminController) UpdateOrderStatus(c *fiber.Ctx) error {
+	id := c.Params("id")
+	var req dto.AdminUpdateStatusRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(dto.ApiResponse{
+			Code: fiber.ErrUnprocessableEntity.Code, Message: "Invalid body", Error: err.Error(),
+		})
+	}
+	if err := util.ValidateRequest(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{
+			Code: fiber.ErrBadRequest.Code, Message: "Invalid status", Error: err,
+		})
+	}
+	claims := c.Locals("session").(*dto.JWTClaims)
+	resp, fail := ctrl.EcomOrdersSvc.UpdateStatus(id, req.Status, claims.ID)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
+			Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message,
+		})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Status updated", Body: resp})
+}
+
+// CreateBiteshipShipment — admin klik "Buat Order Biteship" di detail page.
+// Trigger Biteship Order API → save order_id + status → tunggu webhook untuk
+// waybill (kadang langsung ada di response).
+func (ctrl *EcomAdminController) CreateBiteshipShipment(c *fiber.Ctx) error {
+	id := c.Params("id")
+	claims := c.Locals("session").(*dto.JWTClaims)
+	resp, fail := ctrl.EcomOrdersSvc.CreateBiteshipShipment(id, claims.ID)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
+			Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message,
+		})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Shipment Biteship dibuat", Body: resp})
+}
+
+func (ctrl *EcomAdminController) SetOrderShipping(c *fiber.Ctx) error {
+	id := c.Params("id")
+	var req dto.AdminSetShippingRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(dto.ApiResponse{
+			Code: fiber.ErrUnprocessableEntity.Code, Message: "Invalid body", Error: err.Error(),
+		})
+	}
+	if err := util.ValidateRequest(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{
+			Code: fiber.ErrBadRequest.Code, Message: "Invalid resi", Error: err,
+		})
+	}
+	claims := c.Locals("session").(*dto.JWTClaims)
+	resp, fail := ctrl.EcomOrdersSvc.SetShipping(id, req.AWB, req.Courier, req.Service, claims.ID)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
+			Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message,
+		})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Resi tersimpan, status shipped", Body: resp})
+}
+
+// ─── Vouchers CRUD (Sprint 5) ─────────────────────────────────────────
+
+func (ctrl *EcomAdminController) ListVouchers(c *fiber.Ctx) error {
+	items, fail := ctrl.EcomVoucherSvc.List()
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
+			Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message,
+		})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK", Body: items})
+}
+
+func (ctrl *EcomAdminController) CreateVoucher(c *fiber.Ctx) error {
+	var req dto.VoucherCreateRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(dto.ApiResponse{Code: fiber.ErrUnprocessableEntity.Code, Message: "Invalid body", Error: err.Error()})
+	}
+	if err := util.ValidateRequest(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{Code: fiber.ErrBadRequest.Code, Message: "Invalid input", Error: err})
+	}
+	v, fail := ctrl.EcomVoucherSvc.Create(req)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
+	}
+	return c.Status(fiber.StatusCreated).JSON(dto.ApiResponse{Code: fiber.StatusCreated, Message: "Voucher created", Body: v})
+}
+
+func (ctrl *EcomAdminController) UpdateVoucher(c *fiber.Ctx) error {
+	id := c.Params("id")
+	var req dto.VoucherCreateRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(dto.ApiResponse{Code: fiber.ErrUnprocessableEntity.Code, Message: "Invalid body", Error: err.Error()})
+	}
+	v, fail := ctrl.EcomVoucherSvc.Update(id, req)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Voucher updated", Body: v})
+}
+
+func (ctrl *EcomAdminController) DeleteVoucher(c *fiber.Ctx) error {
+	id := c.Params("id")
+	if fail := ctrl.EcomVoucherSvc.Delete(id); fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Voucher deleted"})
 }

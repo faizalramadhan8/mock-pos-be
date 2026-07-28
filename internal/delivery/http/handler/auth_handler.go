@@ -303,3 +303,101 @@ func (ctrl *AuthController) DeleteUser(c *fiber.Ctx) error {
 		Message: "User deleted successfully",
 	})
 }
+
+// ─── Customer self-service (Sprint 2) ─────────────────────────────
+
+// UpdateProfile — customer edit fullname/phone. Ambil ID dari JWT claims
+// (self-service, tidak ada param id).
+func (ctrl *AuthController) UpdateProfile(c *fiber.Ctx) error {
+	claims := c.Locals("session").(*dto.JWTClaims)
+	var req dto.CustomerProfileUpdateRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(dto.ApiResponse{
+			Code: fiber.ErrUnprocessableEntity.Code, Message: "Invalid body", Error: err.Error(),
+		})
+	}
+	if err := util.ValidateRequest(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{
+			Code: fiber.ErrBadRequest.Code, Message: "Invalid input", Error: err,
+		})
+	}
+	resp, fail := ctrl.AuthService.UpdateCustomerProfile(claims.ID, req)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
+			Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message,
+		})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Profile updated", Body: resp})
+}
+
+// ChangeMyPassword — customer ganti password (butuh password lama untuk
+// confirm identity). Reuse ChangePassword usecase.
+func (ctrl *AuthController) ChangeMyPassword(c *fiber.Ctx) error {
+	claims := c.Locals("session").(*dto.JWTClaims)
+	var req dto.ChangePasswordRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(dto.ApiResponse{
+			Code: fiber.ErrUnprocessableEntity.Code, Message: "Invalid body", Error: err.Error(),
+		})
+	}
+	if err := util.ValidateRequest(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{
+			Code: fiber.ErrBadRequest.Code, Message: "Invalid input", Error: err,
+		})
+	}
+	if fail := ctrl.AuthService.ChangePassword(claims.ID, req); fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
+			Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message,
+		})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Password changed"})
+}
+
+// RequestPasswordResetOTP — public. Kirim OTP 6 digit ke email via Brevo.
+// Store OTP di Redis dengan TTL 10 menit. Rate limit: 1 request per 60s per email.
+// Response TIDAK boleh leak "email exists or not" — selalu return 200 supaya
+// attacker tidak bisa enumerate valid emails.
+func (ctrl *AuthController) RequestPasswordResetOTP(c *fiber.Ctx) error {
+	var req dto.PasswordResetRequestOTP
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(dto.ApiResponse{
+			Code: fiber.ErrUnprocessableEntity.Code, Message: "Invalid body", Error: err.Error(),
+		})
+	}
+	if err := util.ValidateRequest(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{
+			Code: fiber.ErrBadRequest.Code, Message: "Invalid input", Error: err,
+		})
+	}
+	// Best-effort — silent-succeed pattern.
+	if fail := ctrl.AuthService.SendPasswordResetOTP(req.Email); fail != nil {
+		// Log internal tapi jangan expose ke user.
+		ctrl.Log.Warn().Str("email", req.Email).Str("err", fail.Message).Msg("password reset request handled internally")
+	}
+	return c.JSON(dto.ApiResponse{
+		Code:    fiber.StatusOK,
+		Message: "Kalau email terdaftar, OTP akan dikirim. Cek inbox dan folder spam.",
+	})
+}
+
+// ConfirmPasswordResetOTP — verify OTP + set password baru. Consume OTP
+// (delete dari Redis) supaya tidak bisa reuse.
+func (ctrl *AuthController) ConfirmPasswordResetOTP(c *fiber.Ctx) error {
+	var req dto.PasswordResetConfirmOTP
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(dto.ApiResponse{
+			Code: fiber.ErrUnprocessableEntity.Code, Message: "Invalid body", Error: err.Error(),
+		})
+	}
+	if err := util.ValidateRequest(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{
+			Code: fiber.ErrBadRequest.Code, Message: "Invalid input", Error: err,
+		})
+	}
+	if fail := ctrl.AuthService.ConfirmPasswordResetOTP(req); fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
+			Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message,
+		})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Password berhasil di-reset. Silakan login."})
+}

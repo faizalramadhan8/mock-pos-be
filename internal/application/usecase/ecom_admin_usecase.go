@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -145,6 +146,16 @@ func (s *EcomAdminService) UpdateEcomFields(id string, req dto.EcomFieldsUpdateR
 			updates["ecom_image"] = req.EcomImage.Value
 		}
 	}
+	if req.EcomImages != nil {
+		// Marshal ke JSON string — GORM datatypes.JSON accept raw bytes.
+		imgs := *req.EcomImages
+		if len(imgs) == 0 {
+			updates["ecom_images"] = nil
+		} else {
+			b, _ := json.Marshal(imgs)
+			updates["ecom_images"] = string(b)
+		}
+	}
 	if req.EcomCategoryID != nil {
 		if req.EcomCategoryID.Null || req.EcomCategoryID.Value == "" {
 			updates["ecom_category_id"] = nil
@@ -213,10 +224,24 @@ func toEcomAdminProductResponse(p *entity.Product) dto.EcomAdminProductResponse 
 		EcomIsAvailable:   p.EcomIsAvailable,
 		EcomDescription:   p.EcomDescription,
 		EcomImage:         p.EcomImage,
+		EcomImages:        decodeEcomImages(p.EcomImages),
 		EcomCategoryID:    p.EcomCategoryID,
 		EcomCategoryName:  catName,
 		EcomWeightGrams:   p.EcomWeightGrams,
 		EcomMinOrder:      p.EcomMinOrder,
 		Image:             p.Image,
 	}
+}
+
+// decodeEcomImages — parse JSON column ke []string. NULL/kosong = empty slice
+// (bukan nil) supaya FE render `[].map` tanpa null guard.
+func decodeEcomImages(raw []byte) []string {
+	if len(raw) == 0 {
+		return []string{}
+	}
+	var out []string
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return []string{}
+	}
+	return out
 }

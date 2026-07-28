@@ -101,3 +101,22 @@ type ChangePasswordRequest struct {
 	NewPassword     string `json:"new_password" validate:"required,min=6"`
 }
 
+// CustomerProfileUpdateRequest — self-service edit terbatas.
+// Email + role + is_active TIDAK exposed (cegah escalation).
+type CustomerProfileUpdateRequest struct {
+	FullName    string `json:"fullname" validate:"omitempty,min=2,max=100"`
+	PhoneNumber string `json:"phone" validate:"omitempty,min=8,max=20"`
+}
+
+// PasswordResetRequestOTP — trigger send OTP ke email (public endpoint).
+type PasswordResetRequestOTP struct {
+	Email string `json:"email" validate:"required,email"`
+}
+
+// PasswordResetConfirmOTP — verify OTP + set password baru.
+type PasswordResetConfirmOTP struct {
+	Email       string `json:"email" validate:"required,email"`
+	OTP         string `json:"otp" validate:"required,len=6"`
+	NewPassword string `json:"new_password" validate:"required,min=6"`
+}
+

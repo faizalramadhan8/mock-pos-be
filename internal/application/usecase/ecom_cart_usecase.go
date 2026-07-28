@@ -133,6 +133,11 @@ func (s *EcomCartService) buildResponse(items []entity.EcomCartItem) *dto.CartRe
 		if p.EcomPrice != nil {
 			price = *p.EcomPrice
 		}
+		// Ecom image override (Sprint 5 gallery main image), fallback ke POS image.
+		image := p.Image
+		if p.EcomImage != nil && *p.EcomImage != "" {
+			image = *p.EcomImage
+		}
 		subtotal := price * float64(it.Quantity)
 
 		unavailable := false
@@ -154,7 +159,7 @@ func (s *EcomCartService) buildResponse(items []entity.EcomCartItem) *dto.CartRe
 			Name:              p.Name,
 			NameID:            p.NameID,
 			SKU:               p.SKU,
-			Image:             p.Image,
+			Image:             image,
 			Quantity:          it.Quantity,
 			Price:             price,
 			MemberPrice:       p.EcomMemberPrice,

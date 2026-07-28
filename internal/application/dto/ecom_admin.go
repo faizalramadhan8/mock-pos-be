@@ -25,6 +25,7 @@ type EcomAdminProductResponse struct {
 	EcomIsAvailable bool     `json:"ecom_is_available"`
 	EcomDescription *string  `json:"ecom_description"`
 	EcomImage       *string  `json:"ecom_image"`
+	EcomImages      []string `json:"ecom_images"`
 	EcomCategoryID  *string  `json:"ecom_category_id"`
 	EcomCategoryName string  `json:"ecom_category_name,omitempty"`
 	EcomWeightGrams *int     `json:"ecom_weight_grams"`
@@ -95,6 +96,7 @@ type EcomFieldsUpdateRequest struct {
 	EcomIsAvailable *bool           `json:"ecom_is_available,omitempty"`
 	EcomDescription *NullableString `json:"ecom_description,omitempty"`
 	EcomImage       *NullableString `json:"ecom_image,omitempty"`
+	EcomImages      *[]string       `json:"ecom_images,omitempty"` // set = replace whole array; nil = tidak update
 	EcomCategoryID  *NullableString `json:"ecom_category_id,omitempty"`
 	EcomWeightGrams *NullableInt    `json:"ecom_weight_grams,omitempty"`
 	EcomMinOrder    *int            `json:"ecom_min_order,omitempty"`

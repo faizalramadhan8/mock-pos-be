@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
@@ -17,16 +18,51 @@ type EcomCheckoutController struct {
 	Log         *zerolog.Logger
 	Shipping    *usecase.EcomShippingService
 	Checkout    *usecase.EcomCheckoutService
+	AdminOrders *usecase.EcomAdminOrdersService // untuk webhook Biteship (butuh Biteship client + status mapping)
+	Voucher     *usecase.EcomVoucherService
 }
 
 func NewEcomCheckoutController(ctx context.Context) *EcomCheckoutController {
 	logger := ctx.Value(enum.LoggerCtxKey).(*zerolog.Logger)
 	db := ctx.Value(enum.GormCtxKey).(*gorm.DB)
 	return &EcomCheckoutController{
-		Log:      logger,
-		Shipping: usecase.NewEcomShippingService(ctx, db),
-		Checkout: usecase.NewEcomCheckoutService(ctx, db),
+		Log:         logger,
+		Shipping:    usecase.NewEcomShippingService(ctx, db),
+		Checkout:    usecase.NewEcomCheckoutService(ctx, db),
+		AdminOrders: usecase.NewEcomAdminOrdersService(ctx, db),
+		Voucher:     usecase.NewEcomVoucherService(ctx, db),
 	}
+}
+
+// ValidateVoucher — customer input di checkout, kita hitung subtotal cart
+// server-side (jangan trust FE subtotal), lalu validate voucher terhadap subtotal.
+func (ctrl *EcomCheckoutController) ValidateVoucher(c *fiber.Ctx) error {
+	var req dto.VoucherValidateRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(dto.ApiResponse{
+			Code: fiber.ErrUnprocessableEntity.Code, Message: "Invalid body", Error: err.Error(),
+		})
+	}
+	if err := util.ValidateRequest(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{
+			Code: fiber.ErrBadRequest.Code, Message: "Invalid input", Error: err,
+		})
+	}
+	claims := c.Locals("session").(*dto.JWTClaims)
+	// Fetch cart subtotal via Shipping.getRates? Simpler: read cart directly.
+	subtotal, ferr := ctrl.Checkout.CartSubtotal(claims.ID, nil)
+	if ferr != nil {
+		return c.Status(ferr.StatusCode.Code).JSON(dto.ApiResponse{
+			Code: ferr.StatusCode.Code, Message: ferr.StatusCode.Message, Error: ferr.Message,
+		})
+	}
+	resp, fail := ctrl.Voucher.Validate(req.Code, subtotal)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
+			Code: fail.StatusCode.Code, Message: fail.Message,
+		})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK", Body: resp})
 }
 
 func (ctrl *EcomCheckoutController) ShippingRates(c *fiber.Ctx) error {
@@ -62,16 +98,81 @@ func (ctrl *EcomCheckoutController) CreateOrder(c *fiber.Ctx) error {
 }
 
 // MidtransWebhook — public endpoint, tanpa JWT. Midtrans POST notification tiap
-// status change. Verify via signature_key (SHA512 hash) — untuk MVP skip signature
-// karena Bu Santi belum register production Midtrans, cukup validate order exists.
+// status change. Verify SHA512 signature untuk cegah spoofing dari IP acak.
+// Stub mode (server key kosong) bypass verify — dev tetap bisa test.
 func (ctrl *EcomCheckoutController) MidtransWebhook(c *fiber.Ctx) error {
 	var notif midtrans.Notification
 	if err := c.BodyParser(&notif); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{Code: fiber.ErrBadRequest.Code, Message: "Invalid payload"})
 	}
+	// Signature verify — hentikan attacker yang POST payload palsu ke webhook.
+	if !ctrl.Checkout.Midtrans.VerifySignature(notif.OrderID, notif.StatusCode, notif.GrossAmount, notif.SignatureKey) {
+		ctrl.Log.Warn().
+			Str("order_id", notif.OrderID).
+			Str("ip", c.IP()).
+			Msg("Midtrans webhook signature mismatch — rejected")
+		return c.Status(fiber.StatusUnauthorized).JSON(dto.ApiResponse{
+			Code: fiber.StatusUnauthorized, Message: "Invalid signature",
+		})
+	}
 	if fail := ctrl.Checkout.HandleMidtransNotification(notif); fail != nil {
 		ctrl.Log.Warn().Str("order_id", notif.OrderID).Str("status", notif.TransactionStatus).Msg("Webhook handle failed")
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
+	}
+	ctrl.Log.Info().
+		Str("order_id", notif.OrderID).
+		Str("status", notif.TransactionStatus).
+		Msg("Midtrans webhook processed OK")
+	return c.JSON(fiber.Map{"status": "ok"})
+}
+
+// BiteshipWebhook — public endpoint. Biteship POST setiap status change
+// order (allocated/picked/delivered/dst) + saat waybill_id di-assign kurir.
+// Verify signature via HMAC-SHA256 dengan shared secret dari config webhook
+// di Biteship dashboard. Bypass verify kalau BITESHIP_WEBHOOK_SECRET kosong
+// (dev mode).
+func (ctrl *EcomCheckoutController) BiteshipWebhook(c *fiber.Ctx) error {
+	// Read raw body untuk signature verify — c.Body() = raw sebelum parse.
+	body := c.Body()
+
+	// Installation validation ping — Biteship (dan gateway lain) kirim POST
+	// dengan body kosong / `{}` saat admin klik "Buat Webhook" untuk cek URL
+	// reachable + return 200. HARUS respond OK tanpa verify signature, else
+	// Biteship reject setup dengan error "URL doesn't respond with ok response".
+	// Setelah setup jadi, real event bakal punya body non-empty + signature valid.
+	trimmed := strings.TrimSpace(string(body))
+	if trimmed == "" || trimmed == "{}" {
+		ctrl.Log.Info().Str("ip", c.IP()).Msg("Biteship webhook installation ping (empty body)")
+		return c.JSON(fiber.Map{"status": "ok"})
+	}
+
+	// Biteship header signature — pakai header standar HMAC.
+	// Docs: https://biteship.com/id/docs/api/webhook
+	sig := c.Get("X-Biteship-Signature")
+	if !ctrl.AdminOrders.Biteship.VerifyWebhookSignature(body, sig) {
+		ctrl.Log.Warn().Str("ip", c.IP()).Msg("Biteship webhook signature mismatch — rejected")
+		return c.Status(fiber.StatusUnauthorized).JSON(dto.ApiResponse{
+			Code: fiber.StatusUnauthorized, Message: "Invalid signature",
+		})
+	}
+
+	var payload usecase.BiteshipWebhookPayload
+	if err := c.BodyParser(&payload); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{
+			Code: fiber.ErrBadRequest.Code, Message: "Invalid payload", Error: err.Error(),
+		})
+	}
+	payload.Normalize()
+
+	if fail := ctrl.AdminOrders.HandleBiteshipWebhook(payload); fail != nil {
+		ctrl.Log.Warn().
+			Str("biteship_id", payload.OrderID).
+			Str("ref_id", payload.ReferenceID).
+			Str("err", fail.Message).
+			Msg("Biteship webhook handle failed")
+		// Return 200 supaya Biteship tidak retry infinitely — log warn saja.
+		// (Kalau balik error, Biteship akan spam webhook queue.)
+		return c.JSON(fiber.Map{"status": "logged"})
 	}
 	return c.JSON(fiber.Map{"status": "ok"})
 }

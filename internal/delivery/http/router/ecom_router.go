@@ -34,16 +34,31 @@ func UseEcomAdminRouter(ctx context.Context, r fiber.Router) {
 	gated.Post("/categories", ctrl.CreateCategory)
 	gated.Put("/categories/:id", ctrl.UpdateCategory)
 	gated.Delete("/categories/:id", ctrl.DeleteCategory)
+	// Ecom orders (Sprint 1) — admin fulfillment panel.
+	gated.Get("/orders", ctrl.ListOrders)
+	gated.Get("/orders/:id", ctrl.GetOrder)
+	gated.Patch("/orders/:id/status", ctrl.UpdateOrderStatus)
+	gated.Post("/orders/:id/shipping", ctrl.SetOrderShipping)
+	// Sprint 3 — Biteship auto-resi.
+	gated.Post("/orders/:id/biteship-create", ctrl.CreateBiteshipShipment)
+	// Sprint 5 — Voucher/Promo CRUD (admin only).
+	gated.Get("/vouchers", ctrl.ListVouchers)
+	gated.Post("/vouchers", ctrl.CreateVoucher)
+	gated.Put("/vouchers/:id", ctrl.UpdateVoucher)
+	gated.Delete("/vouchers/:id", ctrl.DeleteVoucher)
 }
 
 // UseEcomPublicRouter — public storefront endpoints (no auth). Customer
 // browse produk sebelum login. Filter enforce ecom_is_available + stock_ecom>0.
 func UseEcomPublicRouter(ctx context.Context, r fiber.Router) {
 	ctrl := handler.NewEcomPublicController(ctx)
+	reviewCtrl := handler.NewEcomReviewController(ctx)
 	g := r.Group("/ecom")
 	g.Get("/categories", ctrl.ListCategories)
 	g.Get("/products", ctrl.ListProducts)
 	g.Get("/products/:id", ctrl.GetProduct)
+	// Sprint 5b — Reviews public listing.
+	g.Get("/products/:id/reviews", reviewCtrl.ListForProduct)
 }
 
 // UseEcomCustomerRouter — endpoints untuk authenticated customer (cart, address,
@@ -55,6 +70,7 @@ func UseEcomCustomerRouter(ctx context.Context, r fiber.Router) {
 	addrCtrl := handler.NewEcomAddressController(ctx)
 	checkoutCtrl := handler.NewEcomCheckoutController(ctx)
 	ordersCtrl := handler.NewEcomOrdersController(ctx)
+	reviewCtrl := handler.NewEcomReviewController(ctx)
 
 	g := r.Group("/ecom", auth.AllowEcomCustomer())
 	// Cart
@@ -70,11 +86,19 @@ func UseEcomCustomerRouter(ctx context.Context, r fiber.Router) {
 	// Checkout
 	g.Post("/shipping/rates", checkoutCtrl.ShippingRates)
 	g.Post("/checkout/create-order", checkoutCtrl.CreateOrder)
+	// Sprint 5 — Voucher validate (customer at checkout).
+	g.Post("/checkout/validate-voucher", checkoutCtrl.ValidateVoucher)
 	// Customer own orders
 	g.Get("/orders", ordersCtrl.List)
 	g.Get("/orders/:id", ordersCtrl.GetDetail)
 
+	// Sprint 5b — Reviews (customer submit + check eligibility).
+	g.Get("/products/:id/reviews/me", reviewCtrl.CanReviewMe)
+	g.Post("/reviews", reviewCtrl.Submit)
+
 	// Midtrans webhook — PUBLIC (Midtrans server hits this, no JWT).
 	// Mounted di r (root) — bukan grup /ecom gated.
 	r.Post("/ecom/payments/webhook/midtrans", checkoutCtrl.MidtransWebhook)
+	// Biteship webhook — public juga, sig verified via HMAC-SHA256 di handler.
+	r.Post("/ecom/shipping/webhook/biteship", checkoutCtrl.BiteshipWebhook)
 }

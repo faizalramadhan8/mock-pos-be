@@ -3,6 +3,11 @@ package dto
 // ─── Shipping ─────────────────────────────────────────────────────────
 type ShippingRateRequest struct {
 	AddressID string `json:"address_id" validate:"required,uuid"`
+	// Kalau non-empty, ongkir dihitung berdasar berat item ini saja (partial
+	// cart / buy-now). Empty = pakai seluruh cart. BuyNowItems override
+	// SelectedItemIDs kalau dua-duanya diisi.
+	SelectedItemIDs []string     `json:"selected_item_ids,omitempty"`
+	BuyNowItems     []BuyNowItem `json:"buy_now_items,omitempty"`
 }
 
 type ShippingRate struct {
@@ -33,12 +38,28 @@ type CheckoutCreateRequest struct {
 	ShippingCost    float64 `json:"shipping_cost" validate:"gte=0"`
 	ShippingETD     string  `json:"shipping_etd"`
 	Notes           string  `json:"notes,omitempty"`
+	VoucherCode     string  `json:"voucher_code,omitempty"` // opsional
+	// Selected cart items — kalau kosong = pakai SEMUA cart item (backward compat).
+	// Kalau di-set = hanya item dengan id ini yang di-checkout (partial cart).
+	// Item cart lain TIDAK di-hapus, tetap tersimpan di cart untuk checkout berikutnya.
+	SelectedItemIDs []string `json:"selected_item_ids,omitempty"`
+	// Buy-now mode — bypass cart entirely. Kalau di-set, checkout langsung
+	// dari list ini (bukan dari cart DB). Cart user tidak disentuh.
+	BuyNowItems []BuyNowItem `json:"buy_now_items,omitempty"`
+}
+
+// BuyNowItem — payload direct-checkout dari tombol "Beli Sekarang" di PDP.
+type BuyNowItem struct {
+	ProductID string `json:"product_id" validate:"required,uuid"`
+	Quantity  int    `json:"quantity" validate:"required,min=1"`
 }
 
 type CheckoutCreateResponse struct {
 	OrderID         string  `json:"order_id"`
 	Subtotal        float64 `json:"subtotal"`
 	ShippingCost    float64 `json:"shipping_cost"`
+	VoucherCode     string  `json:"voucher_code,omitempty"`
+	VoucherDiscount float64 `json:"voucher_discount,omitempty"`
 	Total           float64 `json:"total"`
 	SnapToken       string  `json:"snap_token,omitempty"`
 	SnapRedirectURL string  `json:"snap_redirect_url,omitempty"`
@@ -74,6 +95,7 @@ type CustomerOrderDetail struct {
 		ServiceName string `json:"service_name"`
 		ETD         string `json:"etd"`
 		AWB         string `json:"awb,omitempty"`
+		BiteshipOrderID string `json:"biteship_order_id,omitempty"` // admin-visible; kalau tidak kosong = auto-resi via Biteship API
 		Address     struct {
 			Label          string `json:"label"`
 			RecipientName  string `json:"recipient_name"`

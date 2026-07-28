@@ -146,6 +146,16 @@ func (s *EcomPublicService) GetProduct(id string) (*dto.EcomProductDetail, *dto.
 	if product.EcomDescription != nil {
 		detail.Description = *product.EcomDescription
 	}
+	// Gallery images. Decode JSON dari ecom_images. Kalau kosong, fallback
+	// ke [Image] tunggal supaya FE swiper tetap render 1 slide. Kalau Image
+	// juga kosong, kirim empty slice — FE tampilkan placeholder Package icon.
+	if imgs := decodeEcomImages(product.EcomImages); len(imgs) > 0 {
+		detail.Images = imgs
+	} else if base.Image != "" {
+		detail.Images = []string{base.Image}
+	} else {
+		detail.Images = []string{}
+	}
 
 	// Load tier grosir (target 'all_customers' saja untuk public storefront).
 	var tiers []entity.ProductPriceTier

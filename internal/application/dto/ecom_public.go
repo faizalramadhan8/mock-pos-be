@@ -32,10 +32,14 @@ type EcomProductListItem struct {
 	IsLowStock      bool     `json:"is_low_stock"`      // stock ≤ 5 (urgency signal)
 }
 
-// EcomProductDetail — full detail untuk PDP. Include description + tiers.
+// EcomProductDetail — full detail untuk PDP. Include description + tiers +
+// gallery images. Image utama tetap di parent (EcomProductListItem.Image);
+// Images[0] biasanya = Image (duplicate OK — FE bisa dedup atau tampil
+// semua). Kalau EcomImages kosong di DB, Images = [Image] saja (fallback).
 type EcomProductDetail struct {
 	EcomProductListItem
 	Description string                 `json:"description,omitempty"`
+	Images      []string               `json:"images,omitempty"` // gallery untuk swipe
 	Tiers       []EcomProductTierPrice `json:"tiers,omitempty"`
 }
 

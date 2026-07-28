@@ -128,6 +128,9 @@ func (s *EcomOrdersService) GetDetail(userID, orderID string) (*dto.CustomerOrde
 	if order.ShippingAWB != nil {
 		detail.Shipping.AWB = *order.ShippingAWB
 	}
+	if order.BiteshipOrderID != nil {
+		detail.Shipping.BiteshipOrderID = *order.BiteshipOrderID
+	}
 
 	// Address snapshot (decode JSON)
 	if order.ShippingAddressSnapshot != nil {

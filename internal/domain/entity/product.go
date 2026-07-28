@@ -69,6 +69,10 @@ type Product struct {
 	EcomIsAvailable bool     `gorm:"column:ecom_is_available;type:tinyint(1);not null;default:1" json:"ecom_is_available"`
 	EcomDescription *string  `gorm:"column:ecom_description;type:text;null" json:"ecom_description,omitempty"`
 	EcomImage       *string  `gorm:"column:ecom_image;type:varchar(500);null" json:"ecom_image,omitempty"`
+	// EcomImages — JSON array of tambahan URL untuk gallery. Kosong = fallback
+	// tampil ecom_image saja. Format simpan: `["/storage/x.jpg","/storage/y.jpg"]`.
+	// Simpan sebagai datatypes.JSON supaya GORM handle marshal/unmarshal.
+	EcomImages      datatypes.JSON `gorm:"column:ecom_images;type:json;null" json:"ecom_images,omitempty"`
 	EcomCategoryID  *string       `gorm:"column:ecom_category_id;type:varchar(36);null" json:"ecom_category_id,omitempty"`
 	EcomCategory    *EcomCategory `gorm:"foreignKey:EcomCategoryID" json:"ecom_category,omitempty"`
 	EcomWeightGrams *int     `gorm:"column:ecom_weight_grams;type:int;null" json:"ecom_weight_grams,omitempty"`
