@@ -374,6 +374,43 @@ func ptrString(p *string) string {
 	return *p
 }
 
+// normalizeCourierService — mapping display name → Biteship service code.
+// Sejak 28 Jul 2026 FE kirim service CODE langsung (mis. "reg"). Tapi order
+// lama (sebelum fix) di DB simpan display name ("Reguler", "YES (Next Day)").
+// Fungsi ini backward-compat: kalau input sudah code lowercase (tidak ada
+// spasi/kapital), pass-through. Kalau display name, translate.
+//
+// Biteship service code per courier bisa berbeda — mapping ini cover pattern
+// umum yang dipakai stub rate kita + response Biteship umum. Kalau ada courier
+// yang service code-nya tidak standar (mis. SiCepat "besok" untuk BEST),
+// tambahkan case di sini.
+func normalizeCourierService(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	// Sudah code (lowercase, no spaces) — pass-through.
+	if s == "reg" || s == "yes" || s == "ez" || s == "oke" || s == "ecopack" ||
+		s == "besok" || s == "bosstuj" || s == "siunt" || s == "gokil" ||
+		s == "next_day" || s == "express" {
+		return s
+	}
+	// Display name → code.
+	switch {
+	case strings.Contains(s, "reguler"), strings.Contains(s, "regular"):
+		return "reg"
+	case strings.Contains(s, "yes"), strings.Contains(s, "next day"):
+		return "yes"
+	case strings.Contains(s, "besok sampai"):
+		return "bosstuj"
+	case strings.Contains(s, "oke"):
+		return "oke"
+	case strings.Contains(s, "eco"):
+		return "ecopack"
+	case strings.Contains(s, "express"):
+		return "express"
+	}
+	// Fallback — strip spaces + lowercase, coba as-is.
+	return strings.ReplaceAll(s, " ", "")
+}
+
 // ─── Biteship Order API (Sprint 3) ───────────────────────────────────
 
 // CreateBiteshipShipment — trigger Biteship Order API untuk generate resi
@@ -451,7 +488,7 @@ func (s *EcomAdminOrdersService) CreateBiteshipShipment(orderID, changedBy strin
 	}
 	courierService := "reg"
 	if order.ShippingService != nil && *order.ShippingService != "" {
-		courierService = strings.ToLower(*order.ShippingService)
+		courierService = normalizeCourierService(*order.ShippingService)
 	}
 
 	// Items untuk insurance calc.
@@ -463,11 +500,18 @@ func (s *EcomAdminOrdersService) CreateBiteshipShipment(orderID, changedBy strin
 		// Weight per unit tidak di-snapshot di order_items — fallback 200g
 		// (Biteship butuh angka, TIDAK boleh 0). Kalau nanti weight critical,
 		// snapshot ke order_items.
+		// Dimensi (l/w/h) juga fallback default supaya kurir yang hitung
+		// dimensional weight (JNE, J&T) tidak reject request. Angka konservatif
+		// untuk bahan kue dry pack.
 		items = append(items, biteship.Item{
-			Name:     it.Name,
-			Value:    int(it.UnitPrice),
-			Weight:   200,
-			Quantity: it.Quantity,
+			Name:        it.Name,
+			Description: it.Name,
+			Value:       int(it.UnitPrice),
+			Weight:      200,
+			Quantity:    it.Quantity,
+			Length:      15,
+			Width:       10,
+			Height:      5,
 		})
 	}
 
