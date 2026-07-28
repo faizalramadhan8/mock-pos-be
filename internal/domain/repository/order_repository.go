@@ -20,7 +20,10 @@ func (r *OrderRepository) FindAll(status string, limit, offset int) ([]entity.Or
 	var orders []entity.Order
 	var total int64
 
-	query := r.DB.Model(&entity.Order{})
+	// 29 Jul 2026: exclude ecom orders dari POS Pesanan. Bu Santi kelola ecom
+	// di panel Admin Ecom terpisah — cegah pending_payment ecom masuk
+	// "Total Pendapatan" POS + list Pesanan bikin confused.
+	query := r.DB.Model(&entity.Order{}).Where("(order_source = 'pos' OR order_source IS NULL OR order_source = '')")
 	if status != "" && status != "all" {
 		query = query.Where("status = ?", status)
 	}
