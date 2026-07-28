@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -10,20 +11,27 @@ import (
 	"github.com/faizalramadhan/pos-be/internal/domain/entity"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
 	"github.com/faizalramadhan/pos-be/internal/infrastructure/config"
+	"github.com/faizalramadhan/pos-be/internal/infrastructure/pg"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
 )
 
 type EcomOrdersService struct {
-	DB       *gorm.DB
-	Log      *zerolog.Logger
-	Cfg      *config.Config
+	DB  *gorm.DB
+	Log *zerolog.Logger
+	Cfg *config.Config
+	PG  *pg.Client
 }
 
 func NewEcomOrdersService(ctx context.Context, db *gorm.DB) *EcomOrdersService {
 	logger := ctx.Value(enum.LoggerCtxKey).(*zerolog.Logger)
 	cfg := ctx.Value(enum.ConfigCtxKey).(*config.Config)
-	return &EcomOrdersService{DB: db, Log: logger, Cfg: cfg}
+	return &EcomOrdersService{
+		DB:  db,
+		Log: logger,
+		Cfg: cfg,
+		PG:  pg.NewClient(cfg.PGBaseURL, cfg.PGAppKey, cfg.PGAppSecret, cfg.PGMerchantName),
+	}
 }
 
 // midtransSnapURL — build hosted checkout URL dari snap_token + env.
@@ -55,6 +63,26 @@ func (s *EcomOrdersService) List(userID string) ([]dto.CustomerOrderListItem, *d
 		Find(&orders).Error; err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to fetch orders"}
 	}
+
+	// Self-heal pending_payment orders — ping PG untuk yang recent (< 24 jam,
+	// cegah ping expired trx). Cap 5 per request supaya list load tidak lambat
+	// kalau customer punya banyak order pending (rare). Serial call di
+	// goroutine paralel tidak perlu — 5-order latency masih < 5s worst case.
+	pendingCount := 0
+	for i := range orders {
+		if orders[i].EcomStatus == nil || *orders[i].EcomStatus != "pending_payment" {
+			continue
+		}
+		if time.Since(orders[i].CreatedAt) > 24*time.Hour {
+			continue
+		}
+		s.syncPaymentStatusFromPG(&orders[i])
+		pendingCount++
+		if pendingCount >= 5 {
+			break
+		}
+	}
+
 	out := make([]dto.CustomerOrderListItem, 0, len(orders))
 	for _, o := range orders {
 		ecomStatus := ""
@@ -120,6 +148,52 @@ func (s *EcomOrdersService) ConfirmReceived(userID, orderID string) (*dto.Custom
 	return s.GetDetail(userID, orderID)
 }
 
+// syncPaymentStatusFromPG — best-effort re-sync order status dari PG DOKU.
+// Dipanggil di GetDetail tiap customer buka halaman detail order, sebab PG
+// wrapper alifworks pakai redirect (bukan async webhook) — kalau customer
+// close browser sebelum redirect, DB kita stuck di pending_payment.
+//
+// Cegah race: cuma sync kalau ecom_status='pending_payment' + ada
+// payment_reference (CreatePayment sudah sukses sebelumnya). Kalau PG
+// return PAID, update DB + fire email best-effort. Failure di sini tidak
+// blok display order — sekadar log warn.
+func (s *EcomOrdersService) syncPaymentStatusFromPG(order *entity.Order) {
+	if order.EcomStatus == nil || *order.EcomStatus != "pending_payment" {
+		return
+	}
+	if !s.PG.IsConfigured() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	resp, err := s.PG.CheckStatus(ctx, order.ID)
+	if err != nil {
+		s.Log.Warn().Err(err).Str("order_id", order.ID).Msg("PG CheckStatus sync failed")
+		return
+	}
+	status := strings.ToUpper(resp.PaymentStatus)
+	if status != "PAID" {
+		return
+	}
+	now := time.Now()
+	updates := map[string]interface{}{
+		"ecom_status":     "paid",
+		"status":          "completed",
+		"payment_paid_at": now,
+	}
+	if err := s.DB.Model(&entity.Order{}).Where("id = ?", order.ID).Updates(updates).Error; err != nil {
+		s.Log.Error().Err(err).Str("order_id", order.ID).Msg("PG sync: update order failed")
+		return
+	}
+	s.Log.Info().Str("order_id", order.ID).Msg("PG sync: order auto-marked paid via CheckStatus")
+	// Reflect ke local struct supaya response fresh — cegah customer lihat
+	// stale "pending_payment" di refresh berikutnya.
+	paidStatus := "paid"
+	order.EcomStatus = &paidStatus
+	order.Status = "completed"
+	order.PaymentPaidAt = &now
+}
+
 func (s *EcomOrdersService) GetDetail(userID, orderID string) (*dto.CustomerOrderDetail, *dto.ApiError) {
 	var order entity.Order
 	if err := s.DB.Preload("Items").
@@ -127,6 +201,11 @@ func (s *EcomOrdersService) GetDetail(userID, orderID string) (*dto.CustomerOrde
 		First(&order).Error; err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Order tidak ditemukan"}
 	}
+
+	// Self-heal: kalau order pending_payment, ping PG untuk cek status real.
+	// Cover kasus customer sudah bayar tapi PG belum trigger webhook / callback
+	// belum masuk (browser close, network down, dsb).
+	s.syncPaymentStatusFromPG(&order)
 
 	ecomStatus := ""
 	if order.EcomStatus != nil {
