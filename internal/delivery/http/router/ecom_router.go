@@ -53,12 +53,20 @@ func UseEcomAdminRouter(ctx context.Context, r fiber.Router) {
 func UseEcomPublicRouter(ctx context.Context, r fiber.Router) {
 	ctrl := handler.NewEcomPublicController(ctx)
 	reviewCtrl := handler.NewEcomReviewController(ctx)
+	checkoutCtrl := handler.NewEcomCheckoutController(ctx)
 	g := r.Group("/ecom")
 	g.Get("/categories", ctrl.ListCategories)
 	g.Get("/products", ctrl.ListProducts)
 	g.Get("/products/:id", ctrl.GetProduct)
 	// Sprint 5b — Reviews public listing.
 	g.Get("/products/:id/reviews", reviewCtrl.ListForProduct)
+	// Webhooks — mount di public group supaya BEBAS middleware AllowEcomCustomer.
+	// Dulu di UseEcomCustomerRouter (via r.Post parent) tapi tetap kena JWT check
+	// karena Fiber Group middleware apply per prefix. Bu Santi 28 Jul 2026.
+	//   - Biteship: kurir kirim event tracking (verify HMAC di handler)
+	//   - PG DOKU:  payment gateway kirim status change (DOKU-standard response)
+	g.Post("/payments/webhook/pg", checkoutCtrl.PGWebhook)
+	g.Post("/shipping/webhook/biteship", checkoutCtrl.BiteshipWebhook)
 }
 
 // UseEcomCustomerRouter — endpoints untuk authenticated customer (cart, address,
@@ -99,11 +107,8 @@ func UseEcomCustomerRouter(ctx context.Context, r fiber.Router) {
 	g.Get("/products/:id/reviews/me", reviewCtrl.CanReviewMe)
 	g.Post("/reviews", reviewCtrl.Submit)
 
-	// PG DOKU webhook (28 Jul 2026, ganti Midtrans) — PUBLIC, no JWT.
-	// alifworks PG server hits this URL yang di-set di CreatePayment
-	// callback_url. Response DOKU-standard {responseCode, responseMessage}
-	// via handler-nya.
-	r.Post("/ecom/payments/webhook/pg", checkoutCtrl.PGWebhook)
-	// Biteship webhook — public juga, sig verified via HMAC-SHA256 di handler.
-	r.Post("/ecom/shipping/webhook/biteship", checkoutCtrl.BiteshipWebhook)
+	// Webhooks Biteship + PG di-mount di UseEcomPublicRouter supaya BEBAS
+	// middleware AllowEcomCustomer. Register di sini dulu bikin 401 karena
+	// Fiber Group middleware apply per prefix `/ecom/*`, meskipun route di
+	// register di parent r. Bu Santi 28 Jul 2026.
 }
