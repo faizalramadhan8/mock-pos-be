@@ -71,6 +71,9 @@ func UseEcomPublicRouter(ctx context.Context, r fiber.Router) {
 	//   - PG DOKU:  payment gateway kirim status change (DOKU-standard response)
 	g.Post("/payments/webhook/pg", checkoutCtrl.PGWebhook)
 	g.Post("/shipping/webhook/biteship", checkoutCtrl.BiteshipWebhook)
+	// Maps API — public (dipakai FE address form saat register / add address).
+	// Rate limit di Biteship side; kita cache 60s di FE untuk cegah spam.
+	g.Get("/shipping/areas", checkoutCtrl.SearchAreas)
 }
 
 // UseEcomCustomerRouter — endpoints untuk authenticated customer (cart, address,

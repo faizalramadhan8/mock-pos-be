@@ -17,6 +17,10 @@ type EcomAddress struct {
 	District        string  `gorm:"type:varchar(100);not null" json:"district"`
 	Subdistrict     string  `gorm:"type:varchar(100);not null" json:"subdistrict"`
 	Zipcode         string  `gorm:"type:varchar(10);not null" json:"zipcode"`
+	// Biteship area_id — dari Maps API /v1/maps/areas. NULL untuk address
+	// lama pre-migration 000063. Kurir Anteraja/Ninja/ID Express butuh ini
+	// untuk quote rate akurat (postal code ambigu multi-kelurahan).
+	BiteshipAreaID  *string `gorm:"column:biteship_area_id;type:varchar(64);null" json:"biteship_area_id,omitempty"`
 	StreetAddress   string  `gorm:"column:street_address;type:text;not null" json:"street_address"`
 	Latitude        *float64 `gorm:"type:decimal(10,7);null" json:"latitude,omitempty"`
 	Longitude       *float64 `gorm:"type:decimal(10,7);null" json:"longitude,omitempty"`

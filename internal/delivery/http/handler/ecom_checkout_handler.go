@@ -67,6 +67,18 @@ func (ctrl *EcomCheckoutController) ValidateVoucher(c *fiber.Ctx) error {
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK", Body: resp})
 }
 
+// SearchAreas — GET /ecom/shipping/areas?q=...
+// Public (no JWT) supaya bisa dipakai di address form BEFORE login juga.
+// FE debounce 300ms + minimal 3 char.
+func (ctrl *EcomCheckoutController) SearchAreas(c *fiber.Ctx) error {
+	q := strings.TrimSpace(c.Query("q"))
+	areas, fail := ctrl.Shipping.SearchAreas(q)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK", Body: areas})
+}
+
 func (ctrl *EcomCheckoutController) ShippingRates(c *fiber.Ctx) error {
 	var req dto.ShippingRateRequest
 	if err := c.BodyParser(&req); err != nil {

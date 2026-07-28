@@ -47,6 +47,30 @@ func NewBiteshipClient(cfg *config.Config) *biteship.Client {
 	)
 }
 
+// SearchAreas — proxy ke Biteship Maps API. Dipakai FE address form untuk
+// autocomplete "Kelurahan". FE debounce ~300ms sebelum call supaya tidak
+// spam Biteship (docs bilang trigger setelah user selesai ngetik).
+// Return array minimal 0, non-nil.
+func (s *EcomShippingService) SearchAreas(input string) ([]biteship.Area, *dto.ApiError) {
+	if len(input) < 3 {
+		return []biteship.Area{}, nil
+	}
+	if !s.Biteship.IsConfigured() {
+		return []biteship.Area{}, nil
+	}
+	areas, err := s.Biteship.SearchAreas(input)
+	if err != nil {
+		s.Log.Warn().Err(err).Str("input", input).Msg("Biteship SearchAreas failed")
+		// Kembalikan empty saja — cegah address form stuck loading. FE fallback:
+		// customer input postal manual, kita cover via postal_code path.
+		return []biteship.Area{}, nil
+	}
+	if areas == nil {
+		areas = []biteship.Area{}
+	}
+	return areas, nil
+}
+
 // GetRates — kalkulasi shipping option berdasar alamat + cart total berat.
 func (s *EcomShippingService) GetRates(userID string, req dto.ShippingRateRequest) (*dto.ShippingRatesResponse, *dto.ApiError) {
 	// Load address
@@ -102,14 +126,19 @@ func (s *EcomShippingService) GetRates(userID string, req dto.ShippingRateReques
 		totalWeight = 1000
 	}
 
-	// Biteship — coba area_id, postal_code, lat/lng berurutan sesuai ketersediaan.
-	rates, err := s.Biteship.GetRates(biteship.RateRequest{
+	// Biteship — prefer area_id (accurate, unlock kurir Anteraja/Ninja/ID
+	// Express), fallback postal_code, fallback lat/lng.
+	rateReq := biteship.RateRequest{
 		DestinationPostal: addr.Zipcode,
 		DestinationLat:    addr.Latitude,
 		DestinationLng:    addr.Longitude,
 		Items:             items,
 		TotalWeightGrams:  totalWeight,
-	})
+	}
+	if addr.BiteshipAreaID != nil && *addr.BiteshipAreaID != "" {
+		rateReq.DestinationAreaID = *addr.BiteshipAreaID
+	}
+	rates, err := s.Biteship.GetRates(rateReq)
 	if err != nil {
 		s.Log.Error().Err(err).Msg("Failed to get shipping rates")
 		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Gagal ambil ongkir"}

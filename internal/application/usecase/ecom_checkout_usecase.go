@@ -198,18 +198,26 @@ func (s *EcomCheckoutService) CreateOrder(userID string, userEmail, userPhone, u
 		total = 0
 	}
 
-	// Snapshot alamat ke JSON.
+	// Snapshot alamat ke JSON. `biteship_area_id` di-include supaya
+	// CreateBiteshipShipment (admin usecase) bisa pass area_id ke Biteship
+	// tanpa harus lookup address lagi (address bisa berubah/di-hapus setelah
+	// checkout).
+	biteshipAreaID := ""
+	if addr.BiteshipAreaID != nil {
+		biteshipAreaID = *addr.BiteshipAreaID
+	}
 	addrSnapshotBytes, _ := json.Marshal(map[string]interface{}{
-		"label":           addr.Label,
-		"recipient_name":  addr.RecipientName,
-		"recipient_phone": addr.RecipientPhone,
-		"province":        addr.Province,
-		"city":            addr.City,
-		"district":        addr.District,
-		"subdistrict":     addr.Subdistrict,
-		"zipcode":         addr.Zipcode,
-		"street_address":  addr.StreetAddress,
-		"notes":           addr.Notes,
+		"label":            addr.Label,
+		"recipient_name":   addr.RecipientName,
+		"recipient_phone":  addr.RecipientPhone,
+		"province":         addr.Province,
+		"city":             addr.City,
+		"district":         addr.District,
+		"subdistrict":      addr.Subdistrict,
+		"zipcode":          addr.Zipcode,
+		"biteship_area_id": biteshipAreaID,
+		"street_address":   addr.StreetAddress,
+		"notes":            addr.Notes,
 	})
 	addrSnapshot := string(addrSnapshotBytes)
 

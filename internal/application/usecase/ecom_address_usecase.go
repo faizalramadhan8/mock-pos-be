@@ -60,6 +60,7 @@ func (s *EcomAddressService) Create(userID string, req dto.AddressCreateRequest)
 		District:       req.District,
 		Subdistrict:    req.Subdistrict,
 		Zipcode:        req.Zipcode,
+		BiteshipAreaID: req.BiteshipAreaID,
 		StreetAddress:  req.StreetAddress,
 		Latitude:       req.Latitude,
 		Longitude:      req.Longitude,
@@ -94,6 +95,7 @@ func (s *EcomAddressService) Update(userID, id string, req dto.AddressUpdateRequ
 	row.District = req.District
 	row.Subdistrict = req.Subdistrict
 	row.Zipcode = req.Zipcode
+	row.BiteshipAreaID = req.BiteshipAreaID
 	row.StreetAddress = req.StreetAddress
 	row.Latitude = req.Latitude
 	row.Longitude = req.Longitude
@@ -138,6 +140,7 @@ func toAddressResponse(a *entity.EcomAddress) dto.AddressResponse {
 		District:       a.District,
 		Subdistrict:    a.Subdistrict,
 		Zipcode:        a.Zipcode,
+		BiteshipAreaID: a.BiteshipAreaID,
 		StreetAddress:  a.StreetAddress,
 		Latitude:       a.Latitude,
 		Longitude:      a.Longitude,

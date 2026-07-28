@@ -436,37 +436,52 @@ func normalizeCourierCompany(s string) string {
 }
 
 // normalizeCourierService — mapping display name → Biteship service code.
-// Sejak 28 Jul 2026 FE kirim service CODE langsung (mis. "reg"). Tapi order
-// lama (sebelum fix) di DB simpan display name ("Reguler", "YES (Next Day)").
-// Fungsi ini backward-compat: kalau input sudah code lowercase (tidak ada
-// spasi/kapital), pass-through. Kalau display name, translate.
+// Sejak 28 Jul 2026 FE kirim service CODE langsung (mis. "reg"). Fungsi ini
+// safety net untuk order lama yang backfill display name atau admin input
+// manual dari dropdown yang salah label.
 //
-// Biteship service code per courier bisa berbeda — mapping ini cover pattern
-// umum yang dipakai stub rate kita + response Biteship umum. Kalau ada courier
-// yang service code-nya tidak standar (mis. SiCepat "besok" untuk BEST),
-// tambahkan case di sini.
+// Reference list resmi Biteship (Couriers API):
+//   jne:     reg | yes | oke | jtr...
+//   jnt:     ez (ONLY — no "reg" for J&T)
+//   sicepat: reg | best | sds | gokil
+//   ninja:   standard (no "reg" for Ninja)
+//   pos:     kilat_khusus | q9_same_day | same_day | next_day | jumbo_ekonomi
+//   anteraja: reg | same_day | next_day
+//   tiki:    eko | sds | reg | ons
+//   lion:    reg_pack | land_pack | one_pack | jago_pack | docu_pack | big_pack
+//   idexpress: reg | smd | idtruck
+//   sap:     reg | ods | sds | cargo
+//
+// Untuk case dimana display "Reguler" dipakai untuk multiple courier dengan
+// service code beda (JNT tidak punya "reg", pakai "ez"), caller HARUS pastikan
+// pakai code langsung dari FE Rates response — bukan hasil normalize.
 func normalizeCourierService(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
-	// Sudah code (lowercase, no spaces) — pass-through.
-	if s == "reg" || s == "yes" || s == "ez" || s == "oke" || s == "ecopack" ||
-		s == "besok" || s == "bosstuj" || s == "siunt" || s == "gokil" ||
-		s == "next_day" || s == "express" {
+	// Whitelist code yang sudah pass-through (spelling exact Biteship).
+	switch s {
+	case "reg", "yes", "ez", "oke", "best", "sds", "gokil", "standard",
+		"kilat_khusus", "q9_same_day", "same_day", "next_day", "jumbo_ekonomi",
+		"reg_pack", "land_pack", "one_pack", "jago_pack", "docu_pack", "big_pack",
+		"eko", "ons", "ods", "cargo", "smd", "idtruck", "instant",
+		"jtr", "jtr_150_250", "jtr_150", "jtr_250":
 		return s
 	}
-	// Display name → code.
+	// Display name → code (best-effort, ambigu untuk multi-courier).
 	switch {
 	case strings.Contains(s, "reguler"), strings.Contains(s, "regular"):
 		return "reg"
-	case strings.Contains(s, "yes"), strings.Contains(s, "next day"):
+	case strings.Contains(s, "yes"):
 		return "yes"
-	case strings.Contains(s, "besok sampai"):
-		return "bosstuj"
+	case strings.Contains(s, "best"), strings.Contains(s, "besok sampai"):
+		return "best"
+	case strings.Contains(s, "next day"):
+		return "next_day"
+	case strings.Contains(s, "same day"):
+		return "same_day"
 	case strings.Contains(s, "oke"):
 		return "oke"
-	case strings.Contains(s, "eco"):
-		return "ecopack"
-	case strings.Contains(s, "express"):
-		return "express"
+	case strings.Contains(s, "instant"):
+		return "instant"
 	}
 	// Fallback — strip spaces + lowercase, coba as-is.
 	return strings.ReplaceAll(s, " ", "")
@@ -526,6 +541,7 @@ func (s *EcomAdminOrdersService) CreateBiteshipShipment(orderID, changedBy strin
 	destName := get("recipient_name")
 	destPhone := get("recipient_phone")
 	destPostal := get("zipcode")
+	destAreaID := get("biteship_area_id") // baru sejak migration 000063
 	destAddress := strings.Join([]string{
 		get("street_address"),
 		get("subdistrict"),
@@ -584,10 +600,15 @@ func (s *EcomAdminOrdersService) CreateBiteshipShipment(orderID, changedBy strin
 		// Dimensi (l/w/h) hardcoded default supaya kurir yang hitung
 		// dimensional weight (JNE, J&T) tidak reject request. Bahan kue rata
 		// kemasan mirip; kalau ada produk oversize nanti tambah kolom dimensi.
+		// Category "food_and_drink" — value valid Biteship (bukan "food" yang
+		// reject 40002038). Docs bilang category ini "important for instant
+		// delivery to ensure the courier assignment and avoid longer pick up
+		// & delivery time" — bahan kue masuk kategori ini. Alternatif untuk
+		// item non-consumable nanti: groceries / frozen_food / others.
 		items = append(items, biteship.Item{
 			Name:        it.Name,
 			Description: it.Name,
-			Category:    "food", // bahan kue — cegah reject di kurir Lion/Pos untuk aturan makanan
+			Category:    "food_and_drink",
 			Value:       int(it.UnitPrice),
 			Weight:      weight,
 			Quantity:    it.Quantity,
@@ -608,6 +629,7 @@ func (s *EcomAdminOrdersService) CreateBiteshipShipment(orderID, changedBy strin
 		DestinationPhone:   destPhone,
 		DestinationAddress: destAddress,
 		DestinationPostal:  destPostal,
+		DestinationAreaID:  destAreaID, // prefer area_id atas postal (accurate)
 		DestinationNote:    destNote,
 		CourierCode:        courierCode,
 		CourierService:     courierService,
@@ -744,10 +766,24 @@ func (s *EcomAdminOrdersService) SyncBiteshipStatus(orderID, changedBy string) (
 		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Order belum di-generate resi Biteship"}
 	}
 
-	tracking, err := s.Biteship.GetOrder(*order.BiteshipOrderID)
-	if err != nil {
-		s.Log.Error().Err(err).Str("order_id", orderID).Msg("biteship sync GetOrder failed")
-		return nil, &dto.ApiError{StatusCode: fiber.ErrBadGateway, Message: "Gagal ambil status dari Biteship: " + err.Error()}
+	// Prefer GetTracking (lightweight endpoint) kalau tracking_id sudah ke-set.
+	// Fallback GetOrder (heavy endpoint) untuk order lama yang belum ada
+	// tracking_id — mis. pre-migration 000062 atau webhook belum fire.
+	var tracking *biteship.TrackingStatus
+	if order.ShippingTrackingID != nil && *order.ShippingTrackingID != "" {
+		t, err := s.Biteship.GetTracking(*order.ShippingTrackingID)
+		if err != nil {
+			s.Log.Error().Err(err).Str("order_id", orderID).Msg("biteship sync GetTracking failed")
+			return nil, &dto.ApiError{StatusCode: fiber.ErrBadGateway, Message: "Gagal ambil tracking dari Biteship: " + err.Error()}
+		}
+		tracking = t
+	} else {
+		t, err := s.Biteship.GetOrder(*order.BiteshipOrderID)
+		if err != nil {
+			s.Log.Error().Err(err).Str("order_id", orderID).Msg("biteship sync GetOrder failed")
+			return nil, &dto.ApiError{StatusCode: fiber.ErrBadGateway, Message: "Gagal ambil status dari Biteship: " + err.Error()}
+		}
+		tracking = t
 	}
 
 	updates := map[string]interface{}{}

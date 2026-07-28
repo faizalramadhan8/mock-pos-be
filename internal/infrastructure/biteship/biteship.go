@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -203,22 +204,23 @@ func (c *Client) GetRates(req RateRequest) ([]Rate, error) {
 }
 
 // itemsForRequest — kalau caller supply real items pakai itu, else buat
-// 1 aggregated line item pakai total weight (backward compat). Category
-// default "food" — toko Bu Santi khusus bahan kue.
+// 1 aggregated line item pakai total weight (backward compat).
+//
+// Category field TIDAK di-default — Biteship validate enum ketat (docs
+// sample "fashion" tapi "food" reject dengan code 40002038). Kalau caller
+// tahu value valid, di-set eksplisit. Skip kalau kosong.
 func (c *Client) itemsForRequest(req RateRequest) []map[string]interface{} {
 	if len(req.Items) > 0 {
 		out := make([]map[string]interface{}, 0, len(req.Items))
 		for _, it := range req.Items {
-			cat := it.Category
-			if cat == "" {
-				cat = "food"
-			}
 			m := map[string]interface{}{
 				"name":     it.Name,
 				"value":    it.Value,
 				"weight":   it.Weight,
 				"quantity": it.Quantity,
-				"category": cat,
+			}
+			if it.Category != "" {
+				m["category"] = it.Category
 			}
 			if it.Description != "" {
 				m["description"] = it.Description
@@ -246,7 +248,6 @@ func (c *Client) itemsForRequest(req RateRequest) []map[string]interface{} {
 			"value":    10000,
 			"weight":   w,
 			"quantity": 1,
-			"category": "food",
 		},
 	}
 }
@@ -446,10 +447,9 @@ func (c *Client) CancelOrder(biteshipOrderID, reason string) error {
 	return nil
 }
 
-// GetTracking — GET /v1/trackings/:tracking_id. Ambil status resi live dari
-// Biteship, dipakai admin "Sync status manual" kalau webhook missed. tracking_id
-// dari response CreateOrder (courier.tracking_id) atau dari webhook payload.
-// Kalau caller cuma punya order.id (Biteship order_id), pakai GetOrder dulu.
+// TrackingStatus — subset field dari GET /v1/orders/:id ATAU
+// GET /v1/trackings/:tracking_id. Kedua endpoint return payload sedikit
+// berbeda tapi field yang kita butuh sama.
 type TrackingStatus struct {
 	OrderID   string `json:"order_id"`
 	WaybillID string `json:"waybill_id"`
@@ -463,6 +463,60 @@ type TrackingStatus struct {
 	} `json:"history"`
 }
 
+// GetTracking — GET /v1/trackings/:tracking_id. Lightweight — cuma return
+// status + history, no full order metadata. Prefer ini dari GetOrder untuk
+// polling status via cron. tracking_id di-populate saat CreateOrder response
+// atau webhook `order.waybill_id`.
+func (c *Client) GetTracking(trackingID string) (*TrackingStatus, error) {
+	if !c.IsConfigured() {
+		return nil, fmt.Errorf("biteship not configured")
+	}
+	httpReq, err := http.NewRequest("GET", "https://api.biteship.com/v1/trackings/"+trackingID, nil)
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Authorization", c.APIKey)
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("biteship get tracking (%d): %s", resp.StatusCode, string(respBody))
+	}
+	var raw struct {
+		Success   bool   `json:"success"`
+		ID        string `json:"id"`
+		WaybillID string `json:"waybill_id"`
+		Status    string `json:"status"`
+		Link      string `json:"link"`
+		OrderID   string `json:"order_id"`
+		Courier   struct {
+			Company string `json:"company"`
+		} `json:"courier"`
+		History []struct {
+			Status    string `json:"status"`
+			Note      string `json:"note"`
+			UpdatedAt string `json:"updated_at"`
+		} `json:"history"`
+	}
+	if err := json.Unmarshal(respBody, &raw); err != nil {
+		return nil, fmt.Errorf("biteship get tracking decode: %w", err)
+	}
+	return &TrackingStatus{
+		OrderID:   raw.OrderID,
+		WaybillID: raw.WaybillID,
+		Courier:   raw.Courier.Company,
+		Status:    raw.Status,
+		Link:      raw.Link,
+		History:   raw.History,
+	}, nil
+}
+
+// GetOrder — GET /v1/orders/:id. Full order metadata incl. courier info +
+// items + destination. Dipakai sync manual admin panel + fallback kalau
+// tracking_id belum ke-set.
 func (c *Client) GetOrder(biteshipOrderID string) (*TrackingStatus, error) {
 	if !c.IsConfigured() {
 		return nil, fmt.Errorf("biteship not configured")
@@ -508,6 +562,57 @@ func (c *Client) GetOrder(biteshipOrderID string) (*TrackingStatus, error) {
 		Link:      raw.Courier.Link,
 		History:   raw.Courier.History,
 	}, nil
+}
+
+// Area — subset field Maps API /v1/maps/areas. Dipakai FE address combobox
+// untuk resolve area_id (dibutuhkan Anteraja, Ninja, ID Express untuk quote
+// rate accurate — postal code sering ambigu multi-kelurahan).
+type Area struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	CountryCode string `json:"country_code"`
+	PostalCode  int    `json:"postal_code"`
+	Level1Name  string `json:"administrative_division_level_1_name"`
+	Level2Name  string `json:"administrative_division_level_2_name"`
+	Level3Name  string `json:"administrative_division_level_3_name"`
+}
+
+// SearchAreas — GET /v1/maps/areas?countries=ID&input=...&type=single.
+// Dipakai autocomplete di address form. Docs bilang trigger call setelah user
+// selesai ngetik (debounce di FE) supaya tidak spam Biteship.
+func (c *Client) SearchAreas(input string) ([]Area, error) {
+	if !c.IsConfigured() {
+		return nil, fmt.Errorf("biteship not configured")
+	}
+	if input == "" {
+		return nil, nil
+	}
+	q := url.Values{}
+	q.Set("countries", "ID")
+	q.Set("input", input)
+	q.Set("type", "single")
+	httpReq, err := http.NewRequest("GET", "https://api.biteship.com/v1/maps/areas?"+q.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Authorization", c.APIKey)
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("biteship maps areas (%d): %s", resp.StatusCode, string(respBody))
+	}
+	var raw struct {
+		Success bool   `json:"success"`
+		Areas   []Area `json:"areas"`
+	}
+	if err := json.Unmarshal(respBody, &raw); err != nil {
+		return nil, fmt.Errorf("biteship maps decode: %w", err)
+	}
+	return raw.Areas, nil
 }
 
 // GetBalance — GET /v1/balance. Admin monitor saldo Biteship + trigger alert

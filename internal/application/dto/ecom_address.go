@@ -10,6 +10,9 @@ type AddressResponse struct {
 	District       string   `json:"district"`
 	Subdistrict    string   `json:"subdistrict"`
 	Zipcode        string   `json:"zipcode"`
+	// Biteship area_id (dari Maps API). Optional untuk address lama — FE
+	// bisa render badge "Alamat Belum Presisi" + tombol re-resolve.
+	BiteshipAreaID *string  `json:"biteship_area_id,omitempty"`
 	StreetAddress  string   `json:"street_address"`
 	Latitude       *float64 `json:"latitude,omitempty"`
 	Longitude      *float64 `json:"longitude,omitempty"`
@@ -26,6 +29,9 @@ type AddressCreateRequest struct {
 	District       string   `json:"district" validate:"required"`
 	Subdistrict    string   `json:"subdistrict" validate:"required"`
 	Zipcode        string   `json:"zipcode" validate:"required,min=5,max=10"`
+	// Optional untuk backward compat address form lama. FE combobox baru
+	// wajib set — di-resolve dari Maps API saat customer pilih kelurahan.
+	BiteshipAreaID *string  `json:"biteship_area_id,omitempty"`
 	StreetAddress  string   `json:"street_address" validate:"required,min=5"`
 	Latitude       *float64 `json:"latitude,omitempty"`
 	Longitude      *float64 `json:"longitude,omitempty"`
