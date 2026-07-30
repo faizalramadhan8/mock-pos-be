@@ -49,6 +49,19 @@ func UseEcomAdminRouter(ctx context.Context, r fiber.Router) {
 	complaintAdminCtrl := handler.NewEcomComplaintController(ctx)
 	gated.Get("/complaints", complaintAdminCtrl.ListForAdmin)
 	gated.Patch("/complaints/:id", complaintAdminCtrl.Reply)
+
+	// Sprint 3 #14 — Review moderation admin.
+	reviewAdminCtrl := handler.NewEcomReviewController(ctx)
+	gated.Get("/reviews", reviewAdminCtrl.ListForAdmin)
+	gated.Patch("/reviews/:id", reviewAdminCtrl.ToggleHide)
+
+	// Sprint 3 #13 — Admin dashboard stats + low stock alert
+	gated.Get("/dashboard", ctrl.GetDashboardStats)
+	gated.Get("/low-stock", ctrl.GetLowStock)
+
+	// Sprint 3 #16 — Admin trigger restock notif dispatcher
+	restockAdminCtrl := handler.NewEcomRestockAlertController(ctx)
+	gated.Post("/products/:id/dispatch-restock", restockAdminCtrl.DispatchNotif)
 	// Sprint 5 — Voucher/Promo CRUD (admin only).
 	gated.Get("/vouchers", ctrl.ListVouchers)
 	gated.Post("/vouchers", ctrl.CreateVoucher)
@@ -66,6 +79,8 @@ func UseEcomPublicRouter(ctx context.Context, r fiber.Router) {
 	g.Get("/categories", ctrl.ListCategories)
 	g.Get("/products", ctrl.ListProducts)
 	g.Get("/products/:id", ctrl.GetProduct)
+	// Sprint 2 #6 (30 Jul 2026) — Related products di PDP.
+	g.Get("/products/:id/related", ctrl.GetRelated)
 	// Sprint 5b — Reviews public listing.
 	g.Get("/products/:id/reviews", reviewCtrl.ListForProduct)
 	// Webhooks — mount di public group supaya BEBAS middleware AllowEcomCustomer.
@@ -125,6 +140,12 @@ func UseEcomCustomerRouter(ctx context.Context, r fiber.Router) {
 	complaintCtrl := handler.NewEcomComplaintController(ctx)
 	g.Post("/complaints", complaintCtrl.Submit)
 	g.Get("/complaints", complaintCtrl.ListForUser)
+
+	// Sprint 3 #16 (30 Jul 2026) — Restock alert subscribe/status/unsub
+	restockCtrl := handler.NewEcomRestockAlertController(ctx)
+	g.Get("/products/:id/restock-alert", restockCtrl.Status)
+	g.Post("/products/:id/restock-alert", restockCtrl.Subscribe)
+	g.Delete("/products/:id/restock-alert", restockCtrl.Unsubscribe)
 
 	// Webhooks Biteship + PG di-mount di UseEcomPublicRouter supaya BEBAS
 	// middleware AllowEcomCustomer. Register di sini dulu bikin 401 karena

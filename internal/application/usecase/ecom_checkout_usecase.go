@@ -496,6 +496,9 @@ func (s *EcomCheckoutService) HandlePGNotification(notif pg.WebhookPayload) *dto
 	// block response webhook (DOKU retry kalau webhook lambat > 5 detik).
 	if shouldMarkPaid {
 		go s.sendOrderPaidEmail(orderID)
+		// Sprint 2 #10 (loyalty ecom) di-HOLD atas permintaan Bu Santi
+		// 30 Jul 2026 — flow member phone matching perlu review dulu.
+		// go s.awardLoyaltyPoints(orderID)
 	}
 
 	return nil

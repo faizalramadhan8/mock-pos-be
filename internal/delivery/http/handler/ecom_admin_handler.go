@@ -24,6 +24,7 @@ type EcomAdminController struct {
 	EcomCategorySvc *usecase.EcomCategoryService
 	EcomOrdersSvc   *usecase.EcomAdminOrdersService
 	EcomVoucherSvc  *usecase.EcomVoucherService
+	EcomStatsSvc    *usecase.EcomAdminStatsService
 }
 
 func NewEcomAdminController(ctx context.Context) *EcomAdminController {
@@ -36,7 +37,26 @@ func NewEcomAdminController(ctx context.Context) *EcomAdminController {
 		EcomCategorySvc: usecase.NewEcomCategoryService(ctx, db),
 		EcomOrdersSvc:   usecase.NewEcomAdminOrdersService(ctx, db),
 		EcomVoucherSvc:  usecase.NewEcomVoucherService(ctx, db),
+		EcomStatsSvc:    usecase.NewEcomAdminStatsService(ctx, db),
 	}
+}
+
+// GetDashboardStats — Sprint 3 #13.
+func (ctrl *EcomAdminController) GetDashboardStats(c *fiber.Ctx) error {
+	resp, fail := ctrl.EcomStatsSvc.GetDashboard()
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK", Body: resp})
+}
+
+func (ctrl *EcomAdminController) GetLowStock(c *fiber.Ctx) error {
+	limit := c.QueryInt("limit", 10)
+	resp, fail := ctrl.EcomStatsSvc.GetLowStock(limit)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK", Body: resp})
 }
 
 // Login — reuse AuthService.Login untuk verify credential, tambah role gate.

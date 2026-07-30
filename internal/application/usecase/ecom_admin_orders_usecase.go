@@ -39,6 +39,7 @@ type EcomAdminOrdersService struct {
 	Log      *zerolog.Logger
 	Biteship *biteship.Client
 	Email    *email.Client
+	Push     *PushService
 	Cfg      *config.Config
 }
 
@@ -50,6 +51,7 @@ func NewEcomAdminOrdersService(ctx context.Context, db *gorm.DB) *EcomAdminOrder
 		Log:      logger,
 		Biteship: NewBiteshipClient(cfg),
 		Email:    email.NewClient(cfg.BrevoAPIKey, cfg.BrevoSenderEmail, cfg.BrevoSenderName),
+		Push:     NewPushService(ctx, db),
 		Cfg:      cfg,
 	}
 }
@@ -159,6 +161,20 @@ func (s *EcomAdminOrdersService) SendOrderStatusEmail(orderID, newStatus string)
 	if err := s.Email.Send(user.Email, recipientName, subject, html, text); err != nil {
 		s.Log.Warn().Err(err).Str("order_id", orderID).Str("status", newStatus).Str("email", user.Email).Msg("status change email send failed")
 	}
+
+	// Sprint 2 #5: fire push notif juga — best-effort, kalau customer belum
+	// subscribe atau VAPID belum di-set, silent skip.
+	pushBody := headline
+	// Body pendek untuk push (biar tidak truncated di notification tray).
+	switch newStatus {
+	case "shipped":
+		pushBody = "Pesanan sudah dikirim, siap lacak paketmu."
+	case "delivered":
+		pushBody = "Paket sudah sampai. Cek dan konfirmasi ya."
+	case "completed":
+		pushBody = "Terima kasih! Jangan lupa tulis ulasan."
+	}
+	s.Push.SendToUser(*order.EcomUserID, headline, pushBody, orderURL)
 }
 
 // AdminList — semua ecom orders, filter by status/search, cursor pagination.

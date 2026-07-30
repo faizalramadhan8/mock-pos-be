@@ -72,7 +72,18 @@ func (s *EcomPublicService) ListCategories() ([]dto.EcomCategoryResponse, *dto.A
 
 // ListProducts — cursor pagination + filter kategori + search + sort.
 // Semua WHERE clause enforce ecom_is_available + stock_ecom > 0.
+// ListProductsFilter — Sprint 2 #7 — filter tambahan untuk Cari/Katalog page.
+type ListProductsFilter struct {
+	MinPrice float64
+	MaxPrice float64
+	InStock  bool // include stock <= 5 as low stock? Handled at FE for badge
+}
+
 func (s *EcomPublicService) ListProducts(categoryID, search, sort, cursor string, limit int) (*dto.EcomProductListResponse, *dto.ApiError) {
+	return s.ListProductsFiltered(categoryID, search, sort, cursor, limit, ListProductsFilter{})
+}
+
+func (s *EcomPublicService) ListProductsFiltered(categoryID, search, sort, cursor string, limit int, filter ListProductsFilter) (*dto.EcomProductListResponse, *dto.ApiError) {
 	var products []entity.Product
 
 	q := s.DB.Model(&entity.Product{}).
@@ -84,6 +95,15 @@ func (s *EcomPublicService) ListProducts(categoryID, search, sort, cursor string
 	if search != "" {
 		like := "%" + search + "%"
 		q = q.Where("name LIKE ? OR name_id LIKE ? OR sku LIKE ?", like, like, like)
+	}
+
+	// Filter harga — pakai COALESCE(ecom_price, selling_price) supaya konsisten
+	// dengan sort. MinPrice/MaxPrice 0 = tidak diapply.
+	if filter.MinPrice > 0 {
+		q = q.Where("COALESCE(ecom_price, selling_price) >= ?", filter.MinPrice)
+	}
+	if filter.MaxPrice > 0 {
+		q = q.Where("COALESCE(ecom_price, selling_price) <= ?", filter.MaxPrice)
 	}
 
 	// Sort options: newest (default), price_asc, price_desc, name.
@@ -132,10 +152,13 @@ func (s *EcomPublicService) ListProducts(categoryID, search, sort, cursor string
 }
 
 // GetProduct — detail full untuk PDP. Include description + tiers.
+// Sprint 3 #16 (30 Jul 2026): habis (stock_ecom=0) TETAP boleh di-view supaya
+// customer bisa subscribe restock alert. ListProducts (katalog) tetap filter
+// stock_ecom > 0 supaya habis tidak muncul di browse.
 func (s *EcomPublicService) GetProduct(id string) (*dto.EcomProductDetail, *dto.ApiError) {
 	var product entity.Product
 	err := s.DB.Preload("EcomCategory").Preload("Category").
-		Where("id = ? AND deleted_at IS NULL AND is_active = 1 AND ecom_is_available = 1 AND stock_ecom > 0", id).
+		Where("id = ? AND deleted_at IS NULL AND is_active = 1 AND ecom_is_available = 1", id).
 		First(&product).Error
 	if err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Produk tidak tersedia"}
@@ -176,6 +199,44 @@ func (s *EcomPublicService) GetProduct(id string) (*dto.EcomProductDetail, *dto.
 	}
 
 	return detail, nil
+}
+
+// GetRelated — produk sejenis untuk PDP cross-sell. Prefer same ecom_category
+// (kalau ada), fallback ke category POS. Exclude current product + out-of-stock.
+// Sort by created_at DESC (proxy "produk baru dulu"). Limit default 6.
+func (s *EcomPublicService) GetRelated(productID string, limit int) ([]dto.EcomProductListItem, *dto.ApiError) {
+	if limit <= 0 || limit > 20 {
+		limit = 6
+	}
+	// Ambil current product untuk tahu category-nya.
+	var current entity.Product
+	if err := s.DB.Select("id, category_id, ecom_category_id").
+		Where("id = ? AND deleted_at IS NULL", productID).First(&current).Error; err != nil {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Produk tidak ditemukan"}
+	}
+
+	// Query produk lain di category sama.
+	q := s.DB.Model(&entity.Product{}).
+		Where("id <> ? AND deleted_at IS NULL AND is_active = 1 AND ecom_is_available = 1 AND stock_ecom > 0", productID)
+	// Prefer ecom_category kalau ada, fallback ke category POS.
+	if current.EcomCategoryID != nil && *current.EcomCategoryID != "" {
+		q = q.Where("ecom_category_id = ?", *current.EcomCategoryID)
+	} else if current.CategoryID != "" {
+		q = q.Where("category_id = ?", current.CategoryID)
+	}
+
+	var products []entity.Product
+	if err := q.Preload("EcomCategory").Preload("Category").
+		Order("created_at DESC").Limit(limit).Find(&products).Error; err != nil {
+		s.Log.Error().Err(err).Msg("GetRelated query failed")
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Gagal ambil produk sejenis"}
+	}
+
+	out := make([]dto.EcomProductListItem, 0, len(products))
+	for _, p := range products {
+		out = append(out, toEcomListItem(&p))
+	}
+	return out, nil
 }
 
 func toEcomListItem(p *entity.Product) dto.EcomProductListItem {

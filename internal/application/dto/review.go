@@ -34,3 +34,23 @@ type ReviewCanReviewResponse struct {
 	CanReview bool               `json:"can_review"`
 	MyReview  *ReviewPublicItem  `json:"my_review,omitempty"`
 }
+
+// ReviewAdminItem — full review data untuk admin moderation panel. Include
+// nama customer real (bukan masked), product info, dan is_hidden state.
+type ReviewAdminItem struct {
+	ID          string `json:"id"`
+	ProductID   string `json:"product_id"`
+	ProductName string `json:"product_name"`
+	UserID      string `json:"user_id"`
+	UserName    string `json:"user_name"`  // real name (bukan masked)
+	UserEmail   string `json:"user_email"`
+	Rating      int    `json:"rating"`
+	Comment     string `json:"comment,omitempty"`
+	IsHidden    bool   `json:"is_hidden"`
+	CreatedAt   string `json:"created_at"`
+}
+
+// ReviewToggleHideRequest — admin toggle is_hidden state.
+type ReviewToggleHideRequest struct {
+	IsHidden bool `json:"is_hidden"`
+}

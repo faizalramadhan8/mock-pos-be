@@ -81,3 +81,33 @@ func (ctrl *EcomReviewController) Submit(c *fiber.Ctx) error {
 	}
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Review tersimpan", Body: r})
 }
+
+// ─── Admin moderation (Sprint 3 #14) ─────────────────────────────────
+
+// ListForAdmin — admin lihat semua review, filter opsional hidden_only + product.
+func (ctrl *EcomReviewController) ListForAdmin(c *fiber.Ctx) error {
+	hiddenOnly := c.Query("hidden_only") == "1" || c.Query("hidden_only") == "true"
+	productID := c.Query("product_id")
+	items, fail := ctrl.Svc.ListForAdmin(hiddenOnly, productID)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK", Body: items})
+}
+
+// ToggleHide — PATCH /admin/reviews/:id — admin hide/unhide review.
+func (ctrl *EcomReviewController) ToggleHide(c *fiber.Ctx) error {
+	id := c.Params("id")
+	var req dto.ReviewToggleHideRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(dto.ApiResponse{Code: fiber.ErrUnprocessableEntity.Code, Message: "Invalid body"})
+	}
+	if fail := ctrl.Svc.ToggleHide(id, req.IsHidden); fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
+	}
+	msg := "Review disembunyikan"
+	if !req.IsHidden {
+		msg = "Review ditampilkan kembali"
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: msg})
+}

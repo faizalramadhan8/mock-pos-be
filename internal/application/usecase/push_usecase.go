@@ -86,6 +86,31 @@ func (s *PushService) SendToAll(title, body, url string) {
 	}
 }
 
+// SendToUser — Sprint 2 #5. Push targeted ke 1 user (ecom customer). Loop
+// semua subscription user tersebut (customer bisa install PWA di > 1 device).
+// Best-effort — kalau ada sub expired, auto-delete di sendPush.
+func (s *PushService) SendToUser(userID, title, body, url string) {
+	if userID == "" || s.Configs.VAPIDPublicKey == "" {
+		return
+	}
+	subs, err := s.Repo.FindByUserID(userID)
+	if err != nil {
+		s.Log.Warn().Err(err).Str("user_id", userID).Msg("push: fetch subs failed")
+		return
+	}
+	if len(subs) == 0 {
+		return
+	}
+	payload, _ := json.Marshal(map[string]string{
+		"title": title,
+		"body":  body,
+		"url":   url,
+	})
+	for _, sub := range subs {
+		s.sendPush(&sub, payload)
+	}
+}
+
 func (s *PushService) sendPush(sub *entity.PushSubscription, payload []byte) {
 	subscription := &webpush.Subscription{
 		Endpoint: sub.Endpoint,

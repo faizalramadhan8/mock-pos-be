@@ -38,6 +38,11 @@ func (ctrl *EcomPublicController) ListCategories(c *fiber.Ctx) error {
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "successfully", Body: items})
 }
 
+// parseFloatQuery — safe parse float from query string; return 0 kalau invalid/kosong.
+func parseFloatQuery(c *fiber.Ctx, key string) float64 {
+	return c.QueryFloat(key, 0)
+}
+
 func (ctrl *EcomPublicController) ListProducts(c *fiber.Ctx) error {
 	category := c.Query("category", "")
 	search := c.Query("search", "")
@@ -47,8 +52,13 @@ func (ctrl *EcomPublicController) ListProducts(c *fiber.Ctx) error {
 	if limit <= 0 || limit > 100 {
 		limit = 24
 	}
+	// Sprint 2 #7 — filter harga
+	filter := usecase.ListProductsFilter{
+		MinPrice: parseFloatQuery(c, "min_price"),
+		MaxPrice: parseFloatQuery(c, "max_price"),
+	}
 
-	resp, fail := ctrl.Service.ListProducts(category, search, sort, cursor, limit)
+	resp, fail := ctrl.Service.ListProductsFiltered(category, search, sort, cursor, limit, filter)
 	if fail != nil {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
 			Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message,
@@ -66,4 +76,15 @@ func (ctrl *EcomPublicController) GetProduct(c *fiber.Ctx) error {
 		})
 	}
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "successfully", Body: resp})
+}
+
+// GetRelated — Sprint 2 #6 (30 Jul 2026) — Related products bawah PDP.
+func (ctrl *EcomPublicController) GetRelated(c *fiber.Ctx) error {
+	id := c.Params("id")
+	limit := c.QueryInt("limit", 6)
+	resp, fail := ctrl.Service.GetRelated(id, limit)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK", Body: resp})
 }

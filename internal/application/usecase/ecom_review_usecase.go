@@ -145,6 +145,79 @@ func (s *EcomReviewService) Upsert(userID string, req dto.ReviewSubmitRequest) (
 	return &newReview, nil
 }
 
+// ─── Admin moderation (Sprint 3 #14) ─────────────────────────────────
+
+// ListForAdmin — semua review dengan filter opsional (hidden only, product_id).
+// Include user + product info untuk display. Order by newest first.
+func (s *EcomReviewService) ListForAdmin(hiddenOnly bool, productID string) ([]dto.ReviewAdminItem, *dto.ApiError) {
+	q := s.DB.Model(&entity.EcomReview{}).Preload("User")
+	if hiddenOnly {
+		q = q.Where("is_hidden = 1")
+	}
+	if productID != "" {
+		q = q.Where("product_id = ?", productID)
+	}
+	var reviews []entity.EcomReview
+	if err := q.Order("created_at DESC").Limit(200).Find(&reviews).Error; err != nil {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Gagal ambil review"}
+	}
+
+	// Batch fetch product names.
+	productIDs := make([]string, 0, len(reviews))
+	seen := map[string]bool{}
+	for _, r := range reviews {
+		if !seen[r.ProductID] {
+			seen[r.ProductID] = true
+			productIDs = append(productIDs, r.ProductID)
+		}
+	}
+	nameByID := map[string]string{}
+	if len(productIDs) > 0 {
+		var products []entity.Product
+		s.DB.Select("id, name_id").Where("id IN ?", productIDs).Find(&products)
+		for _, p := range products {
+			nameByID[p.ID] = p.NameID
+		}
+	}
+
+	out := make([]dto.ReviewAdminItem, 0, len(reviews))
+	for _, r := range reviews {
+		userName := ""
+		userEmail := ""
+		if r.User != nil {
+			userName = r.User.FullName
+			userEmail = r.User.Email
+		}
+		out = append(out, dto.ReviewAdminItem{
+			ID:          r.ID,
+			ProductID:   r.ProductID,
+			ProductName: nameByID[r.ProductID],
+			UserID:      r.UserID,
+			UserName:    userName,
+			UserEmail:   userEmail,
+			Rating:      r.Rating,
+			Comment:     r.Comment,
+			IsHidden:    r.IsHidden,
+			CreatedAt:   r.CreatedAt.Format(time.RFC3339),
+		})
+	}
+	return out, nil
+}
+
+// ToggleHide — admin set is_hidden true/false. Review yang di-hide tidak
+// muncul di PDP public tapi tetap tersimpan (soft-hide, bukan delete).
+func (s *EcomReviewService) ToggleHide(reviewID string, hidden bool) *dto.ApiError {
+	res := s.DB.Model(&entity.EcomReview{}).Where("id = ?", reviewID).Update("is_hidden", hidden)
+	if res.Error != nil {
+		return &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Gagal update review"}
+	}
+	if res.RowsAffected == 0 {
+		return &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Review tidak ditemukan"}
+	}
+	s.Log.Info().Str("review_id", reviewID).Bool("hidden", hidden).Msg("admin toggled review visibility")
+	return nil
+}
+
 // GetMyReview — cek existing review user untuk produk ini. Dipakai FE untuk
 // prefill form / display "Kamu sudah review" state.
 func (s *EcomReviewService) GetMyReview(userID, productID string) (*entity.EcomReview, *dto.ApiError) {
