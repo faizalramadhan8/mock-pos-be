@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
 	"github.com/faizalramadhan/pos-be/internal/infrastructure/biteship"
 	"github.com/faizalramadhan/pos-be/internal/infrastructure/config"
+	"github.com/faizalramadhan/pos-be/internal/infrastructure/email"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
 )
@@ -36,6 +38,7 @@ type EcomAdminOrdersService struct {
 	DB       *gorm.DB
 	Log      *zerolog.Logger
 	Biteship *biteship.Client
+	Email    *email.Client
 	Cfg      *config.Config
 }
 
@@ -46,7 +49,115 @@ func NewEcomAdminOrdersService(ctx context.Context, db *gorm.DB) *EcomAdminOrder
 		DB:       db,
 		Log:      logger,
 		Biteship: NewBiteshipClient(cfg),
+		Email:    email.NewClient(cfg.BrevoAPIKey, cfg.BrevoSenderEmail, cfg.BrevoSenderName),
 		Cfg:      cfg,
+	}
+}
+
+// SendOrderStatusEmail — kirim email notif ke customer setiap kali order
+// status berubah ke milestone penting: shipped, delivered, completed.
+// Best-effort (goroutine, no block webhook). Reuse Brevo — kalau not
+// configured, log stub ke stdout.
+//
+// Dipanggil dari HandleBiteshipWebhook + UpdateStatus + customer
+// ConfirmReceived (nanti perlu di-wire di ecom_orders_usecase.go).
+func (s *EcomAdminOrdersService) SendOrderStatusEmail(orderID, newStatus string) {
+	if s.Email == nil {
+		return
+	}
+	var order entity.Order
+	if err := s.DB.Preload("Items").Where("id = ?", orderID).First(&order).Error; err != nil {
+		return
+	}
+	if order.EcomUserID == nil || *order.EcomUserID == "" {
+		return
+	}
+	var user entity.User
+	if err := s.DB.Where("id = ?", *order.EcomUserID).First(&user).Error; err != nil {
+		return
+	}
+	if user.Email == "" {
+		return
+	}
+
+	// Recipient dari address snapshot.
+	recipientName := user.FullName
+	if order.ShippingAddressSnapshot != nil {
+		var snap map[string]interface{}
+		if json.Unmarshal([]byte(*order.ShippingAddressSnapshot), &snap) == nil {
+			if v, ok := snap["recipient_name"].(string); ok && v != "" {
+				recipientName = v
+			}
+		}
+	}
+
+	shortID := orderID
+	if len(shortID) > 8 {
+		shortID = shortID[:8]
+	}
+
+	appURL := s.Cfg.AppURL
+	if appURL == "" {
+		appURL = "https://tbksanti.id"
+	}
+	orderURL := strings.TrimRight(appURL, "/") + "/shop/pesanan/" + orderID
+
+	// Copy per status — friendly + actionable. Tidak dobel-dobel (paid sudah
+	// dikirim di checkout_usecase, jangan overlap).
+	var subject, headline, body, cta, ctaLabel string
+	switch newStatus {
+	case "shipped":
+		subject = fmt.Sprintf("Pesanan #%s sudah dikirim — TBK Santi", shortID)
+		headline = "Pesananmu sudah dikirim"
+		awb := ""
+		if order.ShippingAWB != nil {
+			awb = *order.ShippingAWB
+		}
+		courier := ""
+		if order.ShippingCourierName != nil && *order.ShippingCourierName != "" {
+			courier = *order.ShippingCourierName
+		} else if order.ShippingCourier != nil {
+			courier = *order.ShippingCourier
+		}
+		body = fmt.Sprintf("Hai %s, pesanan <b>#%s</b> sedang dalam perjalanan.", recipientName, shortID)
+		if awb != "" {
+			body += fmt.Sprintf("<br><br>Kurir: <b>%s</b><br>No. Resi: <b>%s</b>", courier, awb)
+		}
+		body += "<br><br>Kamu bisa lacak paketmu di halaman pesanan."
+		cta = orderURL
+		ctaLabel = "Lacak Paket"
+
+	case "delivered":
+		subject = fmt.Sprintf("Paket #%s sudah sampai — TBK Santi", shortID)
+		headline = "Paketmu sudah sampai"
+		body = fmt.Sprintf("Hai %s, kurir menandai paket <b>#%s</b> sudah tiba di alamatmu.<br><br>Cek dulu barangnya, lalu konfirmasi supaya pesanan bisa ditandai selesai. Kalau tidak dikonfirmasi dalam 7 hari, sistem otomatis menandai selesai.", recipientName, shortID)
+		cta = orderURL
+		ctaLabel = "Konfirmasi Terima"
+
+	case "completed":
+		subject = fmt.Sprintf("Terima kasih — Pesanan #%s selesai", shortID)
+		headline = "Pesanan selesai"
+		body = fmt.Sprintf("Hai %s, pesanan <b>#%s</b> sudah selesai.<br><br>Kami senang bisa melayanimu. Jangan lupa tulis ulasan supaya customer lain terbantu memilih produk.", recipientName, shortID)
+		cta = orderURL
+		ctaLabel = "Tulis Ulasan"
+
+	default:
+		return // status lain tidak fire email (paid handled di checkout_usecase)
+	}
+
+	html := fmt.Sprintf(`<div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:24px">
+<h2 style="color:#C4302B;margin:0 0 8px">%s</h2>
+<p style="color:#333;font-size:14px;line-height:1.6">%s</p>
+<div style="margin:24px 0">
+<a href="%s" style="display:inline-block;padding:12px 24px;background:#C4302B;color:#fff;border-radius:8px;text-decoration:none;font-weight:bold">%s</a>
+</div>
+<p style="color:#999;font-size:12px;margin-top:32px">Toko Bahan Kue Santi · tbksanti.id</p>
+</div>`, headline, body, cta, ctaLabel)
+
+	text := fmt.Sprintf("%s. %s. Lihat: %s", headline, subject, cta)
+
+	if err := s.Email.Send(user.Email, recipientName, subject, html, text); err != nil {
+		s.Log.Warn().Err(err).Str("order_id", orderID).Str("status", newStatus).Str("email", user.Email).Msg("status change email send failed")
 	}
 }
 
@@ -211,6 +322,12 @@ func (s *EcomAdminOrdersService) UpdateStatus(orderID, newStatus, changedBy stri
 
 	s.Log.Info().Str("order_id", orderID).Str("from", current).Str("to", newStatus).Str("by", changedBy).Msg("ecom order status changed")
 
+	// Fire email milestone — shipped/delivered/completed (paid handled di
+	// checkout_usecase saat webhook PG). Async, best-effort.
+	if newStatus == "shipped" || newStatus == "delivered" || newStatus == "completed" {
+		go s.SendOrderStatusEmail(orderID, newStatus)
+	}
+
 	return s.GetDetail(orderID)
 }
 
@@ -248,6 +365,8 @@ func (s *EcomAdminOrdersService) SetShipping(orderID, awb, courier, service, cha
 	}
 
 	s.Log.Info().Str("order_id", orderID).Str("awb", awb).Str("by", changedBy).Msg("ecom order resi set + shipped")
+	// Auto-transition ke shipped di SetShipping — email dengan info resi.
+	go s.SendOrderStatusEmail(orderID, "shipped")
 	return s.GetDetail(orderID)
 }
 
@@ -748,6 +867,12 @@ func (s *EcomAdminOrdersService) HandleBiteshipWebhook(payload BiteshipWebhookPa
 		Str("biteship_status", payload.Status).
 		Str("waybill", payload.WaybillID).
 		Msg("biteship webhook processed")
+
+	// Fire email notif kalau milestone status berubah (shipped/delivered).
+	// Best-effort di goroutine — jangan block webhook response.
+	if newStatus, ok := updates["ecom_status"].(string); ok && (newStatus == "shipped" || newStatus == "delivered") {
+		go s.SendOrderStatusEmail(order.ID, newStatus)
+	}
 	return nil
 }
 

@@ -55,3 +55,27 @@ func (ctrl *EcomOrdersController) ConfirmReceived(c *fiber.Ctx) error {
 	}
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Terima kasih! Pesanan ditandai selesai.", Body: resp})
 }
+
+// CancelPending — customer batalkan sendiri order yang masih pending_payment.
+// Restore stock_ecom otomatis, set ecom_status='cancelled'.
+func (ctrl *EcomOrdersController) CancelPending(c *fiber.Ctx) error {
+	id := c.Params("id")
+	claims := c.Locals("session").(*dto.JWTClaims)
+	resp, fail := ctrl.Service.CancelPending(claims.ID, id)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Pesanan dibatalkan", Body: resp})
+}
+
+// RetryPayment — regenerate payment_url PG untuk order pending_payment yang
+// link-nya expired. Auto-sync status kalau ternyata PG bilang sudah PAID.
+func (ctrl *EcomOrdersController) RetryPayment(c *fiber.Ctx) error {
+	id := c.Params("id")
+	claims := c.Locals("session").(*dto.JWTClaims)
+	resp, fail := ctrl.Service.RetryPayment(claims.ID, id)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Link bayar diperbarui", Body: resp})
+}

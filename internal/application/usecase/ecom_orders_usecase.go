@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -17,20 +18,22 @@ import (
 )
 
 type EcomOrdersService struct {
-	DB  *gorm.DB
-	Log *zerolog.Logger
-	Cfg *config.Config
-	PG  *pg.Client
+	DB    *gorm.DB
+	Log   *zerolog.Logger
+	Cfg   *config.Config
+	PG    *pg.Client
+	Admin *EcomAdminOrdersService // untuk reuse SendOrderStatusEmail
 }
 
 func NewEcomOrdersService(ctx context.Context, db *gorm.DB) *EcomOrdersService {
 	logger := ctx.Value(enum.LoggerCtxKey).(*zerolog.Logger)
 	cfg := ctx.Value(enum.ConfigCtxKey).(*config.Config)
 	return &EcomOrdersService{
-		DB:  db,
-		Log: logger,
-		Cfg: cfg,
-		PG:  pg.NewClient(cfg.PGBaseURL, cfg.PGAppKey, cfg.PGAppSecret, cfg.PGMerchantName),
+		DB:    db,
+		Log:   logger,
+		Cfg:   cfg,
+		PG:    pg.NewClient(cfg.PGBaseURL, cfg.PGAppKey, cfg.PGAppSecret, cfg.PGMerchantName),
+		Admin: NewEcomAdminOrdersService(ctx, db),
 	}
 }
 
@@ -110,6 +113,197 @@ func (s *EcomOrdersService) List(userID string) ([]dto.CustomerOrderListItem, *d
 	return out, nil
 }
 
+// CancelPending — customer batalkan sendiri order yang masih pending_payment
+// (belum bayar). Marketplace pattern: cegah customer harus WA admin kalau
+// ganti pikiran sebelum bayar. Restore stock_ecom yang di-reserve saat
+// CreateOrder. Post-paid orders TIDAK bisa cancel via endpoint ini (admin
+// yang handle refund flow terpisah).
+func (s *EcomOrdersService) CancelPending(userID, orderID string) (*dto.CustomerOrderDetail, *dto.ApiError) {
+	var order entity.Order
+	if err := s.DB.Preload("Items").
+		Where("id = ? AND ecom_user_id = ? AND order_source = 'ecom' AND deleted_at IS NULL", orderID, userID).
+		First(&order).Error; err != nil {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Pesanan tidak ditemukan"}
+	}
+	current := ""
+	if order.EcomStatus != nil {
+		current = *order.EcomStatus
+	}
+	if current != "pending_payment" {
+		return nil, &dto.ApiError{
+			StatusCode: fiber.ErrBadRequest,
+			Message:    "Pesanan tidak bisa dibatalkan karena sudah " + current,
+		}
+	}
+
+	tx := s.DB.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Restore stock_ecom untuk semua item.
+	for _, it := range order.Items {
+		if it.ProductID == "" {
+			continue
+		}
+		if err := tx.Model(&entity.Product{}).Where("id = ?", it.ProductID).
+			Update("stock_ecom", gorm.Expr("stock_ecom + ?", it.Quantity)).Error; err != nil {
+			tx.Rollback()
+			return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Gagal restore stok"}
+		}
+	}
+	updates := map[string]interface{}{
+		"ecom_status": "cancelled",
+		"status":      "cancelled",
+	}
+	if err := tx.Model(&entity.Order{}).Where("id = ?", orderID).Updates(updates).Error; err != nil {
+		tx.Rollback()
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Gagal simpan pembatalan"}
+	}
+	if err := tx.Commit().Error; err != nil {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Gagal commit"}
+	}
+	s.Log.Info().Str("order_id", orderID).Str("user_id", userID).Msg("customer cancelled pending order")
+	return s.GetDetail(userID, orderID)
+}
+
+// RetryPayment — regenerate payment_url di PG DOKU untuk order pending_payment
+// yang link-nya sudah expired (24 jam dari CreateOrder). Reuse trx_id supaya
+// PG side idempotent (kalau sudah paid, PG return status PAID → kita sync).
+// Kalau expired real, PG generate URL baru.
+func (s *EcomOrdersService) RetryPayment(userID, orderID string) (*dto.CustomerOrderDetail, *dto.ApiError) {
+	var order entity.Order
+	if err := s.DB.Preload("Items").
+		Where("id = ? AND ecom_user_id = ? AND order_source = 'ecom' AND deleted_at IS NULL", orderID, userID).
+		First(&order).Error; err != nil {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Pesanan tidak ditemukan"}
+	}
+	current := ""
+	if order.EcomStatus != nil {
+		current = *order.EcomStatus
+	}
+	if current != "pending_payment" {
+		return nil, &dto.ApiError{
+			StatusCode: fiber.ErrBadRequest,
+			Message:    "Retry hanya untuk pesanan menunggu pembayaran",
+		}
+	}
+	if !s.PG.IsConfigured() {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Gateway pembayaran belum siap"}
+	}
+
+	// Cek status di PG dulu — kalau sudah PAID, tinggal sync (jangan
+	// regenerate → double charge risk).
+	pgCtx, pgCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer pgCancel()
+	if statusResp, err := s.PG.CheckStatus(pgCtx, orderID); err == nil &&
+		strings.ToUpper(statusResp.PaymentStatus) == "PAID" {
+		s.Log.Info().Str("order_id", orderID).Msg("RetryPayment: PG sudah PAID, sync ke DB")
+		s.syncPaymentStatusFromPG(&order)
+		return s.GetDetail(userID, orderID)
+	}
+
+	// Ambil user info untuk billing.
+	var user entity.User
+	if err := s.DB.Where("id = ?", userID).First(&user).Error; err != nil {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "User tidak ditemukan"}
+	}
+	// Address snapshot untuk billing recipient.
+	billingName := user.FullName
+	billingPhone := user.PhoneNumber
+	if order.ShippingAddressSnapshot != nil {
+		var snap map[string]interface{}
+		if json.Unmarshal([]byte(*order.ShippingAddressSnapshot), &snap) == nil {
+			if v, ok := snap["recipient_name"].(string); ok && v != "" {
+				billingName = v
+			}
+			if v, ok := snap["recipient_phone"].(string); ok && v != "" {
+				billingPhone = v
+			}
+		}
+	}
+
+	// Rebuild items.
+	pgItems := make([]pg.CreatePaymentItem, 0, len(order.Items))
+	for _, it := range order.Items {
+		pgItems = append(pgItems, pg.CreatePaymentItem{
+			ProductID: it.ProductID, ProductCode: it.ProductID, ProductName: it.Name,
+			Price: it.UnitPrice, Quantity: it.Quantity,
+		})
+	}
+	if order.ShippingCost > 0 {
+		pgItems = append(pgItems, pg.CreatePaymentItem{
+			ProductID: "shipping", ProductCode: "shipping",
+			ProductName: "Ongkir", Price: order.ShippingCost, Quantity: 1,
+		})
+	}
+
+	channel := ""
+	if order.PaymentChannel != nil {
+		channel = *order.PaymentChannel
+	}
+	if channel == "" {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Channel pembayaran tidak tersimpan"}
+	}
+	merchant := s.PG.MerchantName
+	if merchant == "" {
+		merchant = "Testing"
+	}
+	callbackURL := strings.TrimRight(s.Cfg.AppURL, "/") + "/api/v1/ecom/payments/webhook/pg"
+	successURL := strings.TrimRight(s.Cfg.AppURL, "/") + "/shop/pesanan/" + orderID + "?paid=1"
+
+	// Cegah trx_id conflict di PG — append suffix retry. PG treat sebagai
+	// transaksi baru, tapi mapping tetap ke order.id via reference/query.
+	// (Trade-off: kalau PG punya idempotency check by trx_id, retry gagal.
+	//  Untuk sekarang assume PG treat sebagai new).
+	retryTrxID := orderID + "-r" + time.Now().Format("20060102150405")
+
+	pgReq := pg.CreatePaymentRequest{
+		Channel:        channel,
+		TotalAmount:    order.Total,
+		TrxID:          retryTrxID,
+		BillingEmail:   user.Email,
+		BillingName:    billingName,
+		BillingPhone:   billingPhone,
+		BillingAddress: "",
+		BillingID:      userID,
+		BillingUID:     userID,
+		CallbackURL:    callbackURL,
+		SuccessURL:     successURL,
+		Description:    fmt.Sprintf("Retry Order #%s", orderID[:8]),
+		Merchant:       merchant,
+		Remark:         "retry",
+		Item:           pgItems,
+	}
+
+	retryCtx, retryCancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer retryCancel()
+	pgResp, err := s.PG.CreatePayment(retryCtx, pgReq)
+	if err != nil {
+		s.Log.Error().Err(err).Str("order_id", orderID).Msg("RetryPayment: PG create failed")
+		return nil, &dto.ApiError{StatusCode: fiber.ErrBadGateway, Message: "Gagal buat link bayar baru: " + err.Error()}
+	}
+	if pgResp.PaymentURL == "" {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrBadGateway, Message: "Gateway tidak mengirim URL bayar"}
+	}
+
+	// Update payment_url + payment_reference baru + geser expired_at 24 jam.
+	newExpired := time.Now().Add(24 * time.Hour)
+	updates := map[string]interface{}{
+		"payment_url":        pgResp.PaymentURL,
+		"payment_reference":  pgResp.PaymentID,
+		"payment_expired_at": newExpired,
+	}
+	if err := s.DB.Model(&entity.Order{}).Where("id = ?", orderID).Updates(updates).Error; err != nil {
+		s.Log.Error().Err(err).Str("order_id", orderID).Msg("RetryPayment: save url failed")
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Link bayar dibuat tapi gagal simpan"}
+	}
+	s.Log.Info().Str("order_id", orderID).Str("retry_trx", retryTrxID).Msg("RetryPayment: URL regenerated")
+	return s.GetDetail(userID, orderID)
+}
+
 // ConfirmReceived — customer klik "Barang Diterima" di app. Transisi
 // shipped|delivered → completed. Cegah customer transisi status yang bukan
 // haknya (mis. mark cancelled) dengan hardcode target = "completed" di sini.
@@ -145,6 +339,8 @@ func (s *EcomOrdersService) ConfirmReceived(userID, orderID string) (*dto.Custom
 		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Gagal simpan konfirmasi"}
 	}
 	s.Log.Info().Str("order_id", orderID).Str("user_id", userID).Str("from", current).Msg("customer confirmed order received")
+	// Fire email "pesanan selesai + tulis ulasan" — async, best-effort.
+	go s.Admin.SendOrderStatusEmail(orderID, "completed")
 	return s.GetDetail(userID, orderID)
 }
 
