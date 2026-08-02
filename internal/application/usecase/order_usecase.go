@@ -818,18 +818,29 @@ func (s *OrderService) EditPayments(orderID string, req dto.EditPaymentsRequest,
 		}
 	}
 
-	// Update order fields
+	// Update order fields — WAJIB via tx (bukan s.Repo.Update yang pakai s.DB
+	// terpisah). Insiden 2 Aug 2026 (Bu Santi: "salah input transfer"):
+	// s.Repo.Update pakai connection lain + full Save() yang cascade upsert
+	// order.Payments (masih preloaded dari FindByID). Tx sudah lock payment
+	// rows dari Delete di atas → Save connection lain block → deadlock →
+	// backend hang → Cloudflare 504 → FE lihat HTML error page.
+	//
+	// Fix: pakai tx.Model + partial Updates map. Cegah cascade HasMany +
+	// stay dalam tx yang sama supaya lock consistency.
 	now := time.Now()
-	reason := req.Reason
-	order.Payment = primaryPaymentMethod(req.Payments)
-	order.PaymentsEditedAt = &now
-	order.PaymentsEditedBy = &userID
-	order.PaymentsEditedReason = &reason
-	if err := s.Repo.Update(order); err != nil {
+	updates := map[string]interface{}{
+		"payment":                primaryPaymentMethod(req.Payments),
+		"payments_edited_at":     now,
+		"payments_edited_by":     userID,
+		"payments_edited_reason": req.Reason,
+	}
+	if err := tx.Model(&entity.Order{}).Where("id = ?", order.ID).Updates(updates).Error; err != nil {
 		tx.Rollback()
 		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to update order"}
 	}
-	tx.Commit()
+	if err := tx.Commit().Error; err != nil {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to commit"}
+	}
 
 	// Re-fetch to get updated Payments preload
 	updated, _ := s.Repo.FindByID(order.ID)

@@ -25,6 +25,9 @@ type EcomAdminController struct {
 	EcomOrdersSvc   *usecase.EcomAdminOrdersService
 	EcomVoucherSvc  *usecase.EcomVoucherService
 	EcomStatsSvc    *usecase.EcomAdminStatsService
+	EcomCustomerSvc *usecase.EcomAdminCustomersService
+	EcomRefundSvc   *usecase.EcomAdminRefundsService
+	EcomSettingsSvc *usecase.EcomAdminSettingsService
 }
 
 func NewEcomAdminController(ctx context.Context) *EcomAdminController {
@@ -38,7 +41,97 @@ func NewEcomAdminController(ctx context.Context) *EcomAdminController {
 		EcomOrdersSvc:   usecase.NewEcomAdminOrdersService(ctx, db),
 		EcomVoucherSvc:  usecase.NewEcomVoucherService(ctx, db),
 		EcomStatsSvc:    usecase.NewEcomAdminStatsService(ctx, db),
+		EcomCustomerSvc: usecase.NewEcomAdminCustomersService(ctx, db),
+		EcomRefundSvc:   usecase.NewEcomAdminRefundsService(ctx, db),
+		EcomSettingsSvc: usecase.NewEcomAdminSettingsService(ctx, db),
 	}
+}
+
+// ============ Sprint 4 Chunk 5 — Ecom Settings (31 Jul 2026) ============
+
+func (ctrl *EcomAdminController) GetSettings(c *fiber.Ctx) error {
+	resp, fail := ctrl.EcomSettingsSvc.Get()
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK", Body: resp})
+}
+
+func (ctrl *EcomAdminController) UpdateSettings(c *fiber.Ctx) error {
+	patch := map[string]interface{}{}
+	if err := c.BodyParser(&patch); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{Code: fiber.StatusBadRequest, Message: "Body tidak valid"})
+	}
+	resp, fail := ctrl.EcomSettingsSvc.Update(patch)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK", Body: resp})
+}
+
+// ============ Sprint 4 Chunk 2 — Refund flow (31 Jul 2026) ============
+
+func (ctrl *EcomAdminController) CreateRefund(c *fiber.Ctx) error {
+	var req dto.EcomRefundCreateRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{Code: fiber.StatusBadRequest, Message: "Body tidak valid"})
+	}
+	if err := util.ValidateRequest(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{
+			Code: fiber.ErrBadRequest.Code, Message: fiber.ErrBadRequest.Message, Error: err,
+		})
+	}
+	claims := c.Locals("session").(*dto.JWTClaims)
+	resp, fail := ctrl.EcomRefundSvc.Create(claims.ID, req)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK", Body: resp})
+}
+
+func (ctrl *EcomAdminController) ListRefundsByOrder(c *fiber.Ctx) error {
+	orderID := c.Params("id")
+	resp, fail := ctrl.EcomRefundSvc.ListByOrder(orderID)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK", Body: resp})
+}
+
+// ============ Sprint 4 Chunk 1 — Customer management (30 Jul 2026) ============
+
+func (ctrl *EcomAdminController) ListCustomers(c *fiber.Ctx) error {
+	search := c.Query("search", "")
+	page := c.QueryInt("page", 1)
+	limit := c.QueryInt("limit", 25)
+	resp, fail := ctrl.EcomCustomerSvc.List(search, page, limit)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK", Body: resp})
+}
+
+func (ctrl *EcomAdminController) GetCustomer(c *fiber.Ctx) error {
+	id := c.Params("id")
+	resp, fail := ctrl.EcomCustomerSvc.GetDetail(id)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK", Body: resp})
+}
+
+func (ctrl *EcomAdminController) SetCustomerActive(c *fiber.Ctx) error {
+	id := c.Params("id")
+	var req struct {
+		IsActive bool `json:"is_active"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{Code: fiber.StatusBadRequest, Message: "Body tidak valid"})
+	}
+	if fail := ctrl.EcomCustomerSvc.SetActive(id, req.IsActive); fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK"})
 }
 
 // GetDashboardStats — Sprint 3 #13.

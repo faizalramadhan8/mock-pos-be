@@ -62,6 +62,19 @@ func UseEcomAdminRouter(ctx context.Context, r fiber.Router) {
 	// Sprint 3 #16 — Admin trigger restock notif dispatcher
 	restockAdminCtrl := handler.NewEcomRestockAlertController(ctx)
 	gated.Post("/products/:id/dispatch-restock", restockAdminCtrl.DispatchNotif)
+	// Sprint 4 Chunk 1 (30 Jul 2026) — Customer management.
+	gated.Get("/customers", ctrl.ListCustomers)
+	gated.Get("/customers/:id", ctrl.GetCustomer)
+	gated.Patch("/customers/:id/active", ctrl.SetCustomerActive)
+
+	// Sprint 4 Chunk 2 (31 Jul 2026) — Refund flow.
+	gated.Post("/refunds", ctrl.CreateRefund)
+	gated.Get("/orders/:id/refunds", ctrl.ListRefundsByOrder)
+
+	// Sprint 4 Chunk 5 (31 Jul 2026) — Ecom settings.
+	gated.Get("/settings", ctrl.GetSettings)
+	gated.Patch("/settings", ctrl.UpdateSettings)
+
 	// Sprint 5 — Voucher/Promo CRUD (admin only).
 	gated.Get("/vouchers", ctrl.ListVouchers)
 	gated.Post("/vouchers", ctrl.CreateVoucher)
@@ -76,6 +89,8 @@ func UseEcomPublicRouter(ctx context.Context, r fiber.Router) {
 	reviewCtrl := handler.NewEcomReviewController(ctx)
 	checkoutCtrl := handler.NewEcomCheckoutController(ctx)
 	g := r.Group("/ecom")
+	// Sprint 4 Chunk 5 (31 Jul 2026) — public subset dari ecom settings.
+	g.Get("/settings", ctrl.PublicSettings)
 	g.Get("/categories", ctrl.ListCategories)
 	g.Get("/products", ctrl.ListProducts)
 	g.Get("/products/:id", ctrl.GetProduct)

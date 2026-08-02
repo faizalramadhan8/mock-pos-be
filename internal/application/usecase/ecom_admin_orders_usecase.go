@@ -183,14 +183,28 @@ func (s *EcomAdminOrdersService) List(status, search, cursor string, limit int) 
 	q := s.DB.Model(&entity.Order{}).
 		Where("order_source = ? AND deleted_at IS NULL", "ecom")
 
-	if status != "" && status != "all" {
+	// Sprint 4 Chunk 4 (31 Jul 2026) — search mode auto-cover semua status.
+	// Kalau admin sudah kasih search keyword, ignore status filter — dia lagi
+	// cari order spesifik, tidak peduli statusnya apa.
+	hasSearch := strings.TrimSpace(search) != ""
+	if !hasSearch && status != "" && status != "all" {
 		q = q.Where("ecom_status = ?", status)
 	}
-	if search != "" {
-		like := "%" + strings.TrimSpace(search) + "%"
-		// Match order id (short prefix), customer name/phone (dari shipping snapshot JSON).
-		q = q.Where("id LIKE ? OR JSON_EXTRACT(shipping_address_snapshot, '$.recipient_name') LIKE ? OR JSON_EXTRACT(shipping_address_snapshot, '$.recipient_phone') LIKE ?",
-			like, like, like)
+	if hasSearch {
+		term := strings.TrimSpace(search)
+		like := "%" + term + "%"
+		// Match:
+		//   - Order ID full atau prefix (mis. "abc12345" atau "abc")
+		//   - Recipient name / phone (dari shipping snapshot JSON)
+		//   - AWB / no resi (shipping_awb column)
+		//   - Customer email (JOIN users via ecom_user_id)
+		q = q.Where(`
+			id LIKE ?
+			OR JSON_EXTRACT(shipping_address_snapshot, '$.recipient_name') LIKE ?
+			OR JSON_EXTRACT(shipping_address_snapshot, '$.recipient_phone') LIKE ?
+			OR shipping_awb LIKE ?
+			OR ecom_user_id IN (SELECT id FROM users WHERE email LIKE ? OR fullname LIKE ? OR phone LIKE ?)`,
+			like, like, like, like, like, like, like)
 	}
 	if cursor != "" {
 		if t, err := time.Parse(time.RFC3339, cursor); err == nil {

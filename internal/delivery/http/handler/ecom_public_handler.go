@@ -15,17 +15,42 @@ import (
 // (customer browse produk sebelum login). Response filter enforce hanya
 // produk yang tayang di ecom (ecom_is_available + stock_ecom > 0).
 type EcomPublicController struct {
-	Log     *zerolog.Logger
-	Service *usecase.EcomPublicService
+	Log         *zerolog.Logger
+	Service     *usecase.EcomPublicService
+	SettingsSvc *usecase.EcomAdminSettingsService
 }
 
 func NewEcomPublicController(ctx context.Context) *EcomPublicController {
 	logger := ctx.Value(enum.LoggerCtxKey).(*zerolog.Logger)
 	db := ctx.Value(enum.GormCtxKey).(*gorm.DB)
 	return &EcomPublicController{
-		Log:     logger,
-		Service: usecase.NewEcomPublicService(ctx, db),
+		Log:         logger,
+		Service:     usecase.NewEcomPublicService(ctx, db),
+		SettingsSvc: usecase.NewEcomAdminSettingsService(ctx, db),
 	}
+}
+
+// PublicSettings — subset settings yang aman ditampilkan ke customer publik.
+// Sprint 4 Chunk 5 (31 Jul 2026). Hide payment toggle + email + area_id.
+func (ctrl *EcomPublicController) PublicSettings(c *fiber.Ctx) error {
+	s, fail := ctrl.SettingsSvc.Get()
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
+	}
+	// Whitelist field yang public-safe (no internal config).
+	body := fiber.Map{
+		"min_order_amount":              s.MinOrderAmount,
+		"wa_contact_number":             s.WAContactNumber,
+		"wa_pretext":                    s.WAPretext,
+		"announcement_bar_enabled":      s.AnnouncementBarEnabled,
+		"announcement_bar_text":         s.AnnouncementBarText,
+		"announcement_bar_cta_label":    s.AnnouncementBarCtaLabel,
+		"announcement_bar_cta_url":      s.AnnouncementBarCtaURL,
+		"store_name":                    s.StoreName,
+		"payment_pg_enabled":            s.PaymentPgEnabled,
+		"payment_manual_enabled":        s.PaymentManualEnabled,
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK", Body: body})
 }
 
 func (ctrl *EcomPublicController) ListCategories(c *fiber.Ctx) error {
