@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
@@ -27,7 +28,10 @@ type EcomAdminController struct {
 	EcomStatsSvc    *usecase.EcomAdminStatsService
 	EcomCustomerSvc *usecase.EcomAdminCustomersService
 	EcomRefundSvc   *usecase.EcomAdminRefundsService
-	EcomSettingsSvc *usecase.EcomAdminSettingsService
+	EcomSettingsSvc  *usecase.EcomAdminSettingsService
+	EcomBroadcastSvc *usecase.EcomAdminBroadcastsService
+	EcomAnalyticsSvc *usecase.EcomAdminAnalyticsService
+	EcomActivitySvc  *usecase.EcomAdminActivityService
 }
 
 func NewEcomAdminController(ctx context.Context) *EcomAdminController {
@@ -43,8 +47,109 @@ func NewEcomAdminController(ctx context.Context) *EcomAdminController {
 		EcomStatsSvc:    usecase.NewEcomAdminStatsService(ctx, db),
 		EcomCustomerSvc: usecase.NewEcomAdminCustomersService(ctx, db),
 		EcomRefundSvc:   usecase.NewEcomAdminRefundsService(ctx, db),
-		EcomSettingsSvc: usecase.NewEcomAdminSettingsService(ctx, db),
+		EcomSettingsSvc:  usecase.NewEcomAdminSettingsService(ctx, db),
+		EcomBroadcastSvc: usecase.NewEcomAdminBroadcastsService(ctx, db, usecase.NewPushService(ctx, db)),
+		EcomAnalyticsSvc: usecase.NewEcomAdminAnalyticsService(ctx, db),
+		EcomActivitySvc:  usecase.NewEcomAdminActivityService(ctx, db),
 	}
+}
+
+// ============ Sprint 5 Chunk 10 — Bulk product ops (2 Aug 2026) ============
+
+type bulkProductRequest struct {
+	Action     string   `json:"action" validate:"required,oneof=publish unpublish sync_price reset_price"`
+	ProductIDs []string `json:"product_ids" validate:"required,min=1"`
+}
+
+func (ctrl *EcomAdminController) BulkProductOps(c *fiber.Ctx) error {
+	var req bulkProductRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{Code: fiber.StatusBadRequest, Message: "Body tidak valid"})
+	}
+	if err := util.ValidateRequest(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{
+			Code: fiber.ErrBadRequest.Code, Message: fiber.ErrBadRequest.Message, Error: err,
+		})
+	}
+	var (
+		resp *usecase.BulkUpdateResult
+		fail *dto.ApiError
+	)
+	switch req.Action {
+	case "publish":
+		resp, fail = ctrl.EcomAdminSvc.BulkSetAvailable(req.ProductIDs, true)
+	case "unpublish":
+		resp, fail = ctrl.EcomAdminSvc.BulkSetAvailable(req.ProductIDs, false)
+	case "sync_price":
+		resp, fail = ctrl.EcomAdminSvc.BulkSyncPrice(req.ProductIDs)
+	case "reset_price":
+		resp, fail = ctrl.EcomAdminSvc.BulkResetPrice(req.ProductIDs)
+	}
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
+	}
+	// Audit
+	if claims, ok := c.Locals("session").(*dto.JWTClaims); ok {
+		desc := fmt.Sprintf("Bulk %s %d produk", req.Action, resp.AffectedCount)
+		ctrl.EcomActivitySvc.Record(claims.ID, "product_bulk_"+req.Action, "",
+			desc, map[string]interface{}{"product_ids": req.ProductIDs})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK", Body: resp})
+}
+
+// ============ Sprint 5 Chunk 9 — Activity log (2 Aug 2026) ============
+
+func (ctrl *EcomAdminController) ListActivity(c *fiber.Ctx) error {
+	action := c.Query("action", "")
+	adminID := c.Query("admin_id", "")
+	search := c.Query("search", "")
+	limit := c.QueryInt("limit", 100)
+	rows, fail := ctrl.EcomActivitySvc.List(action, adminID, search, limit)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK", Body: rows})
+}
+
+// ============ Sprint 5 Chunk 8 — Analytics (2 Aug 2026) ============
+
+func (ctrl *EcomAdminController) GetAnalytics(c *fiber.Ctx) error {
+	resp, fail := ctrl.EcomAnalyticsSvc.Get()
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK", Body: resp})
+}
+
+// ============ Sprint 5 Chunk 6 — Broadcast push (2 Aug 2026) ============
+
+func (ctrl *EcomAdminController) SendBroadcast(c *fiber.Ctx) error {
+	var req dto.EcomBroadcastCreateRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{Code: fiber.StatusBadRequest, Message: "Body tidak valid"})
+	}
+	if err := util.ValidateRequest(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{
+			Code: fiber.ErrBadRequest.Code, Message: fiber.ErrBadRequest.Message, Error: err,
+		})
+	}
+	claims := c.Locals("session").(*dto.JWTClaims)
+	resp, fail := ctrl.EcomBroadcastSvc.Send(claims.ID, req)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
+	}
+	ctrl.EcomActivitySvc.Record(claims.ID, "broadcast_sent", "broadcast:"+resp.ID,
+		"Kirim broadcast push: "+req.Title,
+		map[string]interface{}{"delivered": resp.DeliveredCount, "total": resp.TotalSubscribers})
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK", Body: resp})
+}
+
+func (ctrl *EcomAdminController) ListBroadcasts(c *fiber.Ctx) error {
+	resp, fail := ctrl.EcomBroadcastSvc.List()
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK", Body: resp})
 }
 
 // ============ Sprint 4 Chunk 5 — Ecom Settings (31 Jul 2026) ============
@@ -66,7 +171,35 @@ func (ctrl *EcomAdminController) UpdateSettings(c *fiber.Ctx) error {
 	if fail != nil {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
 	}
+	// Audit — cegah dispute "siapa ubah min order jadi Rp X kemarin".
+	if claims, ok := c.Locals("session").(*dto.JWTClaims); ok {
+		keys := make([]string, 0, len(patch))
+		for k := range patch {
+			keys = append(keys, k)
+		}
+		ctrl.EcomActivitySvc.Record(claims.ID, "settings_changed", "settings",
+			"Ubah pengaturan storefront ("+joinKeys(keys)+")", patch)
+	}
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK", Body: resp})
+}
+
+// joinKeys — helper untuk audit description. Limit 5 keys biar description
+// tidak jadi paragraph.
+func joinKeys(keys []string) string {
+	if len(keys) == 0 {
+		return "no changes"
+	}
+	if len(keys) > 5 {
+		keys = append(keys[:5], "…")
+	}
+	out := ""
+	for i, k := range keys {
+		if i > 0 {
+			out += ", "
+		}
+		out += k
+	}
+	return out
 }
 
 // ============ Sprint 4 Chunk 2 — Refund flow (31 Jul 2026) ============
@@ -86,6 +219,9 @@ func (ctrl *EcomAdminController) CreateRefund(c *fiber.Ctx) error {
 	if fail != nil {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
 	}
+	ctrl.EcomActivitySvc.Record(claims.ID, "refund_created", "order:"+req.OrderID,
+		fmt.Sprintf("Refund Rp %.0f (%s)", req.Amount, req.Method),
+		map[string]interface{}{"amount": req.Amount, "method": req.Method, "complaint_id": req.ComplaintID})
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK", Body: resp})
 }
 
@@ -130,6 +266,15 @@ func (ctrl *EcomAdminController) SetCustomerActive(c *fiber.Ctx) error {
 	}
 	if fail := ctrl.EcomCustomerSvc.SetActive(id, req.IsActive); fail != nil {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
+	}
+	if claims, ok := c.Locals("session").(*dto.JWTClaims); ok {
+		action := "customer_blocked"
+		desc := "Blokir customer"
+		if req.IsActive {
+			action = "customer_unblocked"
+			desc = "Aktifkan customer"
+		}
+		ctrl.EcomActivitySvc.Record(claims.ID, action, "customer:"+id, desc, nil)
 	}
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK"})
 }

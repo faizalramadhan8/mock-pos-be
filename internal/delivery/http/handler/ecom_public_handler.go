@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
@@ -32,12 +33,22 @@ func NewEcomPublicController(ctx context.Context) *EcomPublicController {
 
 // PublicSettings — subset settings yang aman ditampilkan ke customer publik.
 // Sprint 4 Chunk 5 (31 Jul 2026). Hide payment toggle + email + area_id.
+// Sprint 5 Chunk 7 (2 Aug 2026) — Homepage CMS fields ditambah.
 func (ctrl *EcomPublicController) PublicSettings(c *fiber.Ctx) error {
 	s, fail := ctrl.SettingsSvc.Get()
 	if fail != nil {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
 	}
-	// Whitelist field yang public-safe (no internal config).
+	// Parse JSON columns (stored sebagai string di DB).
+	var pinnedIDs []string
+	if s.PinnedProductIDs != nil && *s.PinnedProductIDs != "" {
+		_ = json.Unmarshal([]byte(*s.PinnedProductIDs), &pinnedIDs)
+	}
+	var featuredCatIDs []string
+	if s.FeaturedCategoryIDs != nil && *s.FeaturedCategoryIDs != "" {
+		_ = json.Unmarshal([]byte(*s.FeaturedCategoryIDs), &featuredCatIDs)
+	}
+
 	body := fiber.Map{
 		"min_order_amount":              s.MinOrderAmount,
 		"wa_contact_number":             s.WAContactNumber,
@@ -49,6 +60,14 @@ func (ctrl *EcomPublicController) PublicSettings(c *fiber.Ctx) error {
 		"store_name":                    s.StoreName,
 		"payment_pg_enabled":            s.PaymentPgEnabled,
 		"payment_manual_enabled":        s.PaymentManualEnabled,
+		// Sprint 5 Chunk 7 — Homepage CMS.
+		"hero_kicker":            s.HeroKicker,
+		"hero_title":             s.HeroTitle,
+		"hero_subtitle":          s.HeroSubtitle,
+		"hero_cta_label":         s.HeroCtaLabel,
+		"hero_cta_url":           s.HeroCtaURL,
+		"pinned_product_ids":     pinnedIDs,
+		"featured_category_ids":  featuredCatIDs,
 	}
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK", Body: body})
 }

@@ -75,6 +75,19 @@ func UseEcomAdminRouter(ctx context.Context, r fiber.Router) {
 	gated.Get("/settings", ctrl.GetSettings)
 	gated.Patch("/settings", ctrl.UpdateSettings)
 
+	// Sprint 5 Chunk 6 (2 Aug 2026) — Broadcast push.
+	gated.Post("/broadcasts", ctrl.SendBroadcast)
+	gated.Get("/broadcasts", ctrl.ListBroadcasts)
+
+	// Sprint 5 Chunk 8 (2 Aug 2026) — Analytics deep.
+	gated.Get("/analytics", ctrl.GetAnalytics)
+
+	// Sprint 5 Chunk 9 (2 Aug 2026) — Activity log.
+	gated.Get("/activity", ctrl.ListActivity)
+
+	// Sprint 5 Chunk 10 (2 Aug 2026) — Bulk product ops.
+	gated.Post("/products/bulk", ctrl.BulkProductOps)
+
 	// Sprint 5 — Voucher/Promo CRUD (admin only).
 	gated.Get("/vouchers", ctrl.ListVouchers)
 	gated.Post("/vouchers", ctrl.CreateVoucher)

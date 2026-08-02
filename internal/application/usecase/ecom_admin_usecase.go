@@ -73,6 +73,66 @@ func (s *EcomAdminService) GetProduct(id string) (*dto.EcomAdminProductResponse,
 	return &resp, nil
 }
 
+// BulkUpdateResult — Sprint 5 Chunk 10.
+type BulkUpdateResult struct {
+	AffectedCount int      `json:"affected_count"`
+	SkippedCount  int      `json:"skipped_count"`
+	SkippedIDs    []string `json:"skipped_ids,omitempty"`
+}
+
+// BulkSetAvailable — publish/unpublish batch. Set ecom_is_available untuk
+// SEMUA product yang ID-nya di request. Sprint 5 Chunk 10 (2 Aug 2026).
+// Skala Bu Santi kecil (< 500 products), single UPDATE dalam 1 query cukup.
+func (s *EcomAdminService) BulkSetAvailable(ids []string, available bool) (*BulkUpdateResult, *dto.ApiError) {
+	if len(ids) == 0 {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Pilih minimal 1 produk"}
+	}
+	res := s.DB.Model(&entity.Product{}).
+		Where("id IN ? AND deleted_at IS NULL", ids).
+		Update("ecom_is_available", available)
+	if res.Error != nil {
+		s.Log.Error().Err(res.Error).Msg("Bulk set availability failed")
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Gagal update batch"}
+	}
+	return &BulkUpdateResult{AffectedCount: int(res.RowsAffected)}, nil
+}
+
+// BulkSyncPrice — set ecom_price = selling_price untuk batch produk. Kalau
+// admin mau harga ecom persis match toko. Skip produk yang selling_price=0
+// (invalid). Sprint 5 Chunk 10 (2 Aug 2026).
+func (s *EcomAdminService) BulkSyncPrice(ids []string) (*BulkUpdateResult, *dto.ApiError) {
+	if len(ids) == 0 {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Pilih minimal 1 produk"}
+	}
+	// UPDATE dengan expression SET ecom_price = selling_price (per-row).
+	// Skip WHERE selling_price > 0 supaya tidak overwrite dengan 0.
+	res := s.DB.Exec(
+		"UPDATE products SET ecom_price = selling_price WHERE id IN ? AND deleted_at IS NULL AND selling_price > 0",
+		ids,
+	)
+	if res.Error != nil {
+		s.Log.Error().Err(res.Error).Msg("Bulk sync price failed")
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Gagal sync harga"}
+	}
+	return &BulkUpdateResult{AffectedCount: int(res.RowsAffected)}, nil
+}
+
+// BulkResetPrice — set ecom_price = NULL supaya fallback ke selling_price
+// (behavior default). Sprint 5 Chunk 10 (2 Aug 2026).
+func (s *EcomAdminService) BulkResetPrice(ids []string) (*BulkUpdateResult, *dto.ApiError) {
+	if len(ids) == 0 {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Pilih minimal 1 produk"}
+	}
+	res := s.DB.Model(&entity.Product{}).
+		Where("id IN ? AND deleted_at IS NULL", ids).
+		Update("ecom_price", nil)
+	if res.Error != nil {
+		s.Log.Error().Err(res.Error).Msg("Bulk reset price failed")
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Gagal reset harga"}
+	}
+	return &BulkUpdateResult{AffectedCount: int(res.RowsAffected)}, nil
+}
+
 // UpdateEcomFields — patch HANYA field ecom_*. Pakai gorm.DB.Model().Updates()
 // dengan struct field explicit supaya kolom POS tidak ke-touch. Cegah GORM
 // zero-value overwrite (Updates dengan struct skip zero values by default).

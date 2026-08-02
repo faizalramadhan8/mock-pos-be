@@ -28,6 +28,22 @@ type EcomSettings struct {
 
 	NotifOrderEmailEnabled bool `gorm:"column:notif_order_email_enabled;type:tinyint(1);not null;default:1" json:"notif_order_email_enabled"`
 
+	// Sprint 5 Chunk 7 (2 Aug 2026) — Homepage CMS. Admin edit tampilan Home
+	// tanpa deploy. Kalau NULL/empty, FE fallback ke default hardcoded.
+	HeroKicker     *string `gorm:"column:hero_kicker;type:varchar(80);null" json:"hero_kicker,omitempty"`
+	HeroTitle      *string `gorm:"column:hero_title;type:varchar(200);null" json:"hero_title,omitempty"`
+	HeroSubtitle   *string `gorm:"column:hero_subtitle;type:varchar(300);null" json:"hero_subtitle,omitempty"`
+	HeroCtaLabel   *string `gorm:"column:hero_cta_label;type:varchar(50);null" json:"hero_cta_label,omitempty"`
+	HeroCtaURL     *string `gorm:"column:hero_cta_url;type:varchar(200);null" json:"hero_cta_url,omitempty"`
+	// JSON array of product IDs (max ~20). Diserialize dari string, di-parse
+	// di response layer supaya FE dapat []string bukan raw JSON.
+	PinnedProductIDs    *string `gorm:"column:pinned_product_ids;type:json;null" json:"-"`
+	FeaturedCategoryIDs *string `gorm:"column:featured_category_ids;type:json;null" json:"-"`
+	// Virtual — populated di Get() dari kolom JSON di atas. Cegah FE parse
+	// raw string. gorm:"-" supaya tidak nyampe DB column.
+	PinnedProductIDsParsed    []string `gorm:"-" json:"pinned_product_ids"`
+	FeaturedCategoryIDsParsed []string `gorm:"-" json:"featured_category_ids"`
+
 	CreatedAt time.Time `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
 	UpdatedAt time.Time `gorm:"default:current_timestamp()" json:"updated_at,omitempty"`
 }

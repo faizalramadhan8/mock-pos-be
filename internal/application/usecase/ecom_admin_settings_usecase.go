@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
@@ -40,6 +41,20 @@ func (s *EcomAdminSettingsService) Get() (*entity.EcomSettings, *dto.ApiError) {
 			return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Gagal ambil settings"}
 		}
 	}
+	// Sprint 5 Chunk 7 — parse JSON kolom ke virtual []string supaya FE
+	// dapat array langsung (bukan raw JSON string).
+	if settings.PinnedProductIDs != nil && *settings.PinnedProductIDs != "" {
+		_ = json.Unmarshal([]byte(*settings.PinnedProductIDs), &settings.PinnedProductIDsParsed)
+	}
+	if settings.FeaturedCategoryIDs != nil && *settings.FeaturedCategoryIDs != "" {
+		_ = json.Unmarshal([]byte(*settings.FeaturedCategoryIDs), &settings.FeaturedCategoryIDsParsed)
+	}
+	if settings.PinnedProductIDsParsed == nil {
+		settings.PinnedProductIDsParsed = []string{}
+	}
+	if settings.FeaturedCategoryIDsParsed == nil {
+		settings.FeaturedCategoryIDsParsed = []string{}
+	}
 	return &settings, nil
 }
 
@@ -64,12 +79,38 @@ func (s *EcomAdminSettingsService) Update(patch map[string]interface{}) (*entity
 		"payment_pg_enabled":          true,
 		"payment_manual_enabled":      true,
 		"notif_order_email_enabled":   true,
+		// Sprint 5 Chunk 7 — Homepage CMS
+		"hero_kicker":            true,
+		"hero_title":             true,
+		"hero_subtitle":          true,
+		"hero_cta_label":         true,
+		"hero_cta_url":           true,
+		"pinned_product_ids":     true,
+		"featured_category_ids":  true,
 	}
 	clean := map[string]interface{}{}
 	for k, v := range patch {
-		if allowed[k] {
-			clean[k] = v
+		if !allowed[k] {
+			continue
 		}
+		// JSON columns — marshal []interface{} ke JSON string supaya MySQL
+		// tidak reject typed slice. Kalau v sudah string, biarkan pass-through.
+		if k == "pinned_product_ids" || k == "featured_category_ids" {
+			switch tv := v.(type) {
+			case nil:
+				clean[k] = nil
+			case string:
+				clean[k] = tv
+			default:
+				b, err := json.Marshal(tv)
+				if err != nil {
+					continue
+				}
+				clean[k] = string(b)
+			}
+			continue
+		}
+		clean[k] = v
 	}
 	if len(clean) == 0 {
 		return s.Get() // no-op

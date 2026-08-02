@@ -111,7 +111,10 @@ func (s *PushService) SendToUser(userID, title, body, url string) {
 	}
 }
 
-func (s *PushService) sendPush(sub *entity.PushSubscription, payload []byte) {
+// sendPush — return true kalau delivered (2xx). Sprint 5 (2 Aug 2026):
+// signature diubah dari void ke bool supaya caller (broadcast) bisa hitung
+// delivered vs failed. Existing callers yang ignore return tetap works.
+func (s *PushService) sendPush(sub *entity.PushSubscription, payload []byte) bool {
 	subscription := &webpush.Subscription{
 		Endpoint: sub.Endpoint,
 		Keys: webpush.Keys{
@@ -127,15 +130,60 @@ func (s *PushService) sendPush(sub *entity.PushSubscription, payload []byte) {
 	})
 	if err != nil {
 		s.Log.Warn().Err(err).Str("endpoint", sub.Endpoint).Msg("Failed to send push")
-		// If subscription expired (410 Gone), delete it
 		if resp != nil && resp.StatusCode == 410 {
 			s.Repo.DeleteByEndpoint(sub.Endpoint)
 		}
-		return
+		return false
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 410 {
 		s.Repo.DeleteByEndpoint(sub.Endpoint)
+		return false
 	}
+	return resp.StatusCode >= 200 && resp.StatusCode < 300
+}
+
+// BroadcastResult — Sprint 5 Chunk 6. Metric hasil broadcast, buat direkam
+// ke ecom_broadcasts + ditampilkan di history.
+type BroadcastResult struct {
+	Delivered        int
+	Failed           int
+	TotalSubscribers int
+}
+
+// SendToEcomCustomers — Sprint 5 Chunk 6 (2 Aug 2026). Fan-out push ke SEMUA
+// customer ecom (users.role='user'). Exclude admin subs supaya broadcast
+// promo tidak muncul di tab POS admin.
+func (s *PushService) SendToEcomCustomers(title, body, url string) BroadcastResult {
+	res := BroadcastResult{}
+	if s.Configs.VAPIDPublicKey == "" {
+		return res
+	}
+	// JOIN users role='user' filter — cegah broadcast reach kasir/admin.
+	var subs []entity.PushSubscription
+	if err := s.Repo.DB.
+		Joins("JOIN users u ON u.id = push_subscriptions.user_id").
+		Where("u.role = ? AND u.deleted_at IS NULL AND u.is_active = 1", "user").
+		Find(&subs).Error; err != nil {
+		s.Log.Error().Err(err).Msg("broadcast: fetch ecom subs failed")
+		return res
+	}
+	res.TotalSubscribers = len(subs)
+	if len(subs) == 0 {
+		return res
+	}
+	payload, _ := json.Marshal(map[string]string{
+		"title": title,
+		"body":  body,
+		"url":   url,
+	})
+	for i := range subs {
+		if s.sendPush(&subs[i], payload) {
+			res.Delivered++
+		} else {
+			res.Failed++
+		}
+	}
+	return res
 }
