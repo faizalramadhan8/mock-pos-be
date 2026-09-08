@@ -14,6 +14,10 @@ import (
 // Read access: AllowAll (cashier boleh lihat widget di Dashboard). Write
 // access: AllowAdmins (cuma admin/superadmin yang boleh catat/edit/hapus
 // pengeluaran — supaya audit trail keuangan tidak dirusak kasir).
+//
+// EXCEPTION `/profit-loss` (8 Sep 2026): SUPERADMIN ONLY per request Bu Santi.
+// Laba Rugi = agregat keuangan rahasia. List pengeluaran mentah tetap
+// admin-accessible (admin yang input), yang rahasia adalah agregasinya.
 func UseExpenseRouter(ctx context.Context, r fiber.Router) {
 	configs := ctx.Value(enum.ConfigCtxKey).(*config.Config)
 	auth := middleware.NewRBACMiddleware(configs.JwtSecret, configs.JwtAccessTokenExpiresIn)
@@ -21,7 +25,7 @@ func UseExpenseRouter(ctx context.Context, r fiber.Router) {
 
 	exp := r.Group("/expenses", auth.AllowAll())
 	exp.Get("/", ctrl.List)
-	exp.Get("/profit-loss", ctrl.ProfitLoss)
+	exp.Get("/profit-loss", auth.AllowSuperAdmin(), ctrl.ProfitLoss)
 	exp.Get("/categories", ctrl.ListCategories)
 	exp.Post("/", auth.AllowAdmins(), ctrl.Create)
 	exp.Put("/:id", auth.AllowAdmins(), ctrl.Update)

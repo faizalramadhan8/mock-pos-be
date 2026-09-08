@@ -77,7 +77,10 @@ func UseCashbookRouter(ctx context.Context, r fiber.Router) {
 	auth := middleware.NewRBACMiddleware(configs.JwtSecret, configs.JwtAccessTokenExpiresIn)
 	ctrl := handler.NewCashbookController(ctx)
 
-	cashbook := r.Group("/cashbook", auth.AllowAdmins())
+	// SUPERADMIN ONLY (8 Sep 2026) — di-tighten dari AllowAdmins. Saldo awal
+	// bulan = angka laporan Arus Kas yang Bu Santi mau rahasiakan dari admin.
+	// Lihat capital_router.go untuk konteks lengkap.
+	cashbook := r.Group("/cashbook", auth.AllowSuperAdmin())
 	cashbook.Get("/opening", ctrl.GetOpeningBalance)
 	cashbook.Get("/opening/all", ctrl.ListOpeningBalances)
 	cashbook.Post("/opening", ctrl.SetOpeningBalance)

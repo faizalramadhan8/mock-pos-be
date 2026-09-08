@@ -15,8 +15,13 @@ func UseCapitalRouter(ctx context.Context, r fiber.Router) {
 	auth := middleware.NewRBACMiddleware(configs.JwtSecret, configs.JwtAccessTokenExpiresIn)
 	ctrl := handler.NewCapitalInjectionController(ctx)
 
-	// Admin only — setoran modal adalah keputusan finansial, kasir tidak boleh.
-	cap := r.Group("/capital-injections", auth.AllowAdmins())
+	// SUPERADMIN ONLY (8 Sep 2026) — di-tighten dari AllowAdmins per request
+	// Bu Santi: "Arus kas dan laba rugi, selain saya tidak ada yang bisa lihat.
+	// Termasuk Pak Komar dan siapapun yang punya akses admin. Aksesnya terbatas
+	// karna bersifat rahasia." Modal/prive owner = data keuangan pribadi.
+	// FE gate (header icon hidden) tidak cukup — admin bisa hit API langsung
+	// via DevTools, jadi BE harus tolak juga.
+	cap := r.Group("/capital-injections", auth.AllowSuperAdmin())
 	cap.Get("/", ctrl.List)
 	cap.Post("/", ctrl.Create)
 	cap.Put("/:id", ctrl.Update)
