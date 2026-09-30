@@ -203,23 +203,25 @@ func (s *ExpenseService) Delete(id string) *dto.ApiError {
 // (akurat historis — kalau harga modal berubah setelah sale, laporan masa
 // lalu tetap valid).
 //
-// PENTING — kenapa revenue TIDAK dihitung dari order_items (insiden 30 Sep
-// 2026, Bu Santi: "dengan arus kas kenapa tidak sama jumlahnya", selisih
-// Rp 19.000 di September): dulu baris ini `revenue += it.UnitPrice * qty`,
-// yaitu jumlah kotor per baris barang. Angka itu berbeda dari `orders.total`
-// dalam tiga hal:
-//   1. Diskon per-nota (`orders.order_discount`) tidak ikut terpotong.
-//   2. Baris yang ditebus pakai poin ikut terhitung sebagai uang masuk,
-//      padahal customer tidak membayar tunai (lihat "Member loyalty points").
-//   3. PPN tidak ikut tertambah.
+// PENTING — ONGKIR BUKAN OMZET (insiden 30 Sep 2026, Bu Santi: "dengan arus
+// kas kenapa tidak sama jumlahnya", selisih Rp 19.000 di September).
 //
-// Arus Kas menjumlahkan `orders.total`, jadi keduanya pasti beda begitu ada
-// diskon nota atau tebus poin. Bu Santi 30 Jun 2026 sudah minta "arus kas dan
-// laba rugi harus klop ya, angkanya mustinya sama" — `orders.total` adalah
-// uang yang benar-benar masuk laci, jadi itu yang dipakai keduanya.
+// Checkout online menghitung `total = subtotal − voucher + ongkir`, jadi
+// `orders.total` pesanan ecom sudah termasuk ongkos kirim. Ongkir itu uang
+// titipan untuk kurir, bukan hasil jualan. Selama pesanan online masih
+// disembunyikan dari laporan hal ini tidak pernah kelihatan; begitu laporan
+// toko dan online digabung (29 Sep 2026), ongkir ikut terhitung sebagai omzet.
 //
-// Kalau nanti butuh omzet kotor sebelum diskon, tambahkan field BARU; jangan
-// mengubah arti `revenue` di sini atau kedua laporan berselisih lagi.
+// Dua nota ecom 12 Sep berselisih Rp 9.000 + Rp 10.000 = persis Rp 19.000 yang
+// Bu Santi lihat. Yang benar saat itu justru angka Laba Rugi (dihitung dari
+// order_items, yang memang tidak mengandung ongkir) — Arus Kas yang kelebihan.
+//
+// Sekarang keduanya memakai `total − shipping_cost`. Untuk pesanan POS
+// `shipping_cost` selalu 0, jadi angka historis toko tidak bergeser.
+//
+// Kalau suatu saat ongkir mau dihitung sebagai pendapatan, biaya kurirnya
+// WAJIB dicatat sebagai pengeluaran juga — kalau tidak, labanya kelebihan
+// terus. Jangan ubah baris ini tanpa itu.
 func (s *ExpenseService) ProfitLoss(from, to string) (*dto.ProfitLossResponse, *dto.ApiError) {
 	orders, err := s.OrderRepo.FindCompletedForAggregate(from, to)
 	if err != nil {
@@ -227,7 +229,7 @@ func (s *ExpenseService) ProfitLoss(from, to string) (*dto.ProfitLossResponse, *
 	}
 	var revenue, cogs float64
 	for _, o := range orders {
-		revenue += o.Total
+		revenue += o.Total - o.ShippingCost
 		for _, it := range o.Items {
 			cogs += it.PurchasePrice * float64(it.Quantity)
 		}

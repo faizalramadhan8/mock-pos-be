@@ -123,6 +123,14 @@ type OrderResponse struct {
 	PaymentsEditedReason *string `json:"payments_edited_reason,omitempty"`
 	// Order source (migration 000047): 'pos' | 'ecom'. Default 'pos'.
 	OrderSource string `json:"order_source,omitempty"`
+	// Ongkos kirim yang ditagihkan ke customer (pesanan ecom saja; 0 untuk
+	// POS). PENTING: `total` pesanan ecom SUDAH termasuk ongkir. Ongkir bukan
+	// omzet toko — FE wajib pakai helper `salesTotal()` untuk menghitung
+	// pendapatan, jangan `total` mentah. Tanpa field ini FE tidak punya cara
+	// memisahkannya. Lihat catatan di ExpenseService.ProfitLoss.
+	// TIDAK pakai omitempty — 0 harus tetap terkirim supaya FE tidak salah
+	// mengira field-nya hilang.
+	ShippingCost float64 `json:"shipping_cost"`
 }
 
 // EditPaymentsRequest — admin/superadmin ubah metode pembayaran setelah
