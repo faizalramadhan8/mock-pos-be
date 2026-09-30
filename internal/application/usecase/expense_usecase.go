@@ -198,9 +198,28 @@ func (s *ExpenseService) Delete(id string) *dto.ApiError {
 }
 
 // ProfitLoss — kalkulasi Laporan Laba Rugi periode tertentu.
-// Revenue + COGS dihitung dari order_items dengan status=completed.
-// COGS pakai snapshot purchase_price (akurat historis — kalau harga modal
-// berubah setelah sale, laporan masa lalu tetap valid).
+//
+// Revenue = SUM(orders.total), COGS dari snapshot order_items.purchase_price
+// (akurat historis — kalau harga modal berubah setelah sale, laporan masa
+// lalu tetap valid).
+//
+// PENTING — kenapa revenue TIDAK dihitung dari order_items (insiden 30 Sep
+// 2026, Bu Santi: "dengan arus kas kenapa tidak sama jumlahnya", selisih
+// Rp 19.000 di September): dulu baris ini `revenue += it.UnitPrice * qty`,
+// yaitu jumlah kotor per baris barang. Angka itu berbeda dari `orders.total`
+// dalam tiga hal:
+//   1. Diskon per-nota (`orders.order_discount`) tidak ikut terpotong.
+//   2. Baris yang ditebus pakai poin ikut terhitung sebagai uang masuk,
+//      padahal customer tidak membayar tunai (lihat "Member loyalty points").
+//   3. PPN tidak ikut tertambah.
+//
+// Arus Kas menjumlahkan `orders.total`, jadi keduanya pasti beda begitu ada
+// diskon nota atau tebus poin. Bu Santi 30 Jun 2026 sudah minta "arus kas dan
+// laba rugi harus klop ya, angkanya mustinya sama" — `orders.total` adalah
+// uang yang benar-benar masuk laci, jadi itu yang dipakai keduanya.
+//
+// Kalau nanti butuh omzet kotor sebelum diskon, tambahkan field BARU; jangan
+// mengubah arti `revenue` di sini atau kedua laporan berselisih lagi.
 func (s *ExpenseService) ProfitLoss(from, to string) (*dto.ProfitLossResponse, *dto.ApiError) {
 	orders, err := s.OrderRepo.FindCompletedForAggregate(from, to)
 	if err != nil {
@@ -208,8 +227,8 @@ func (s *ExpenseService) ProfitLoss(from, to string) (*dto.ProfitLossResponse, *
 	}
 	var revenue, cogs float64
 	for _, o := range orders {
+		revenue += o.Total
 		for _, it := range o.Items {
-			revenue += it.UnitPrice * float64(it.Quantity)
 			cogs += it.PurchasePrice * float64(it.Quantity)
 		}
 	}
