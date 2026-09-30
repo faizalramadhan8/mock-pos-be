@@ -152,16 +152,18 @@ func (s *PurchaseInvoiceService) Create(req dto.CreatePurchaseInvoiceRequest, us
 	return &resp, nil
 }
 
-func (s *PurchaseInvoiceService) GetAll(status, supplierID, from, to string, page, limit int) ([]dto.PurchaseInvoiceResponse, int64, *dto.ApiError) {
-	if limit <= 0 {
-		limit = 50
+// GetAll — list faktur dengan filter. Parameter dibungkus InvoiceFilter
+// (29 Sep 2026) supaya penambahan filter tidak memperpanjang signature.
+func (s *PurchaseInvoiceService) GetAll(f repository.InvoiceFilter, page int) ([]dto.PurchaseInvoiceResponse, int64, *dto.ApiError) {
+	if f.Limit <= 0 {
+		f.Limit = 50
 	}
 	if page <= 0 {
 		page = 1
 	}
-	offset := (page - 1) * limit
+	f.Offset = (page - 1) * f.Limit
 
-	invoices, total, err := s.Repo.FindAll(status, supplierID, from, to, limit, offset)
+	invoices, total, err := s.Repo.FindAll(f)
 	if err != nil {
 		s.Log.Error().Err(err).Msg("Failed to fetch purchase invoices")
 		return nil, 0, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to fetch invoices"}

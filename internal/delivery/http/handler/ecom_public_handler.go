@@ -14,7 +14,7 @@ import (
 
 // EcomPublicController — public endpoints untuk storefront. NO AUTH needed
 // (customer browse produk sebelum login). Response filter enforce hanya
-// produk yang tayang di ecom (ecom_is_available + stock_ecom > 0).
+// produk yang tayang di ecom (ecom_is_available + stock > 0).
 type EcomPublicController struct {
 	Log         *zerolog.Logger
 	Service     *usecase.EcomPublicService

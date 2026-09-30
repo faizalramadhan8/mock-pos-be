@@ -111,6 +111,95 @@ func (s *Scheduler) Start() {
 			s.runEcomAutoComplete()
 		}
 	}()
+
+	// Ecom expire checkout terbengkalai. Stok di-reserve saat customer klik
+	// bayar, tapi kalau dia tidak pernah menyelesaikan pembayaran dan PG tidak
+	// pernah mengirim webhook FAILED/VOIDED, reservasi itu menggantung selamanya.
+	// Sejak stok toko dan online digabung (migration 000073) yang tertahan
+	// adalah stok fisik — kasir tidak bisa menjualnya padahal barangnya ada di
+	// rak. Jalan tiap jam supaya stok cepat kembali, bukan harian.
+	go func() {
+		s.Log.Info().Msg("Ecom expire-unpaid scheduler started")
+		for {
+			time.Sleep(time.Hour)
+			s.runEcomExpireUnpaid()
+		}
+	}()
+}
+
+// ecomUnpaidTTL — batas sabar menunggu pembayaran online. 24 jam sama dengan
+// masa berlaku link pembayaran DOKU, jadi order yang lewat ini sudah pasti
+// tidak bisa dibayar lagi lewat link yang sama.
+const ecomUnpaidTTL = 24 * time.Hour
+
+// runEcomExpireUnpaid — tandai `expired` semua ecom order yang masih
+// pending_payment lewat dari ecomUnpaidTTL, kembalikan stoknya, dan catat
+// movement-nya. Per order satu transaksi supaya satu order bermasalah tidak
+// memblokir sisanya.
+func (s *Scheduler) runEcomExpireUnpaid() {
+	cutoff := time.Now().Add(-ecomUnpaidTTL)
+
+	var orders []entity.Order
+	if err := s.DB.Preload("Items").
+		Where(`order_source = 'ecom' AND ecom_status = 'pending_payment'
+		       AND created_at <= ? AND deleted_at IS NULL`, cutoff).
+		Limit(200).Find(&orders).Error; err != nil {
+		s.Log.Error().Err(err).Msg("Ecom expire-unpaid: query failed")
+		return
+	}
+	if len(orders) == 0 {
+		return
+	}
+
+	expired := 0
+	for i := range orders {
+		o := orders[i]
+		err := s.DB.Transaction(func(tx *gorm.DB) error {
+			// Re-check di dalam tx — webhook PG bisa saja baru masuk dan
+			// menandai order ini paid tepat sebelum kita proses.
+			var fresh entity.Order
+			if e := tx.Where("id = ?", o.ID).First(&fresh).Error; e != nil {
+				return e
+			}
+			if fresh.EcomStatus == nil || *fresh.EcomStatus != "pending_payment" {
+				return nil // sudah berubah, jangan sentuh
+			}
+
+			for _, it := range o.Items {
+				if it.ProductID == "" {
+					continue
+				}
+				if e := tx.Model(&entity.Product{}).Where("id = ?", it.ProductID).
+					Update("stock", gorm.Expr("stock + ?", it.Quantity)).Error; e != nil {
+					return e
+				}
+				if e := tx.Create(&entity.StockMovement{
+					ID:        uuid.New().String(),
+					ProductID: it.ProductID,
+					Type:      "in",
+					Quantity:  it.Quantity,
+					UnitType:  "individual",
+					UnitPrice: it.UnitPrice,
+					Reason:    "cancel",
+					Note:      fmt.Sprintf("Pesanan online kedaluwarsa, tidak dibayar (Order #%s)", o.ID[:8]),
+					CreatedBy: o.CreatedBy,
+				}).Error; e != nil {
+					return e
+				}
+			}
+			return tx.Model(&entity.Order{}).Where("id = ?", o.ID).
+				Updates(map[string]interface{}{
+					"ecom_status": "expired",
+					"status":      "cancelled",
+				}).Error
+		})
+		if err != nil {
+			s.Log.Error().Err(err).Str("order_id", o.ID).Msg("Ecom expire-unpaid: order failed")
+			continue
+		}
+		expired++
+	}
+	s.Log.Info().Int("expired", expired).Int("scanned", len(orders)).Msg("Ecom expire-unpaid: done")
 }
 
 // runEcomAutoComplete — mark completed semua ecom order yang ecom_status =
@@ -301,22 +390,24 @@ func (s *Scheduler) checkAndNotify() {
 		alerts = append(alerts, fmt.Sprintf("%d batch segera kadaluarsa", len(expiring)))
 	}
 
-	// Check overdue invoices
-	movements, _, err := s.MoveRepo.FindAll("", 500, 0)
-	if err == nil {
-		overdue := 0
-		now := time.Now()
-		for _, m := range movements {
-			if m.PaymentStatus == "unpaid" && m.DueDate != nil {
-				dueDate, err := time.Parse("2006-01-02", *m.DueDate)
-				if err == nil && dueDate.Before(now) {
-					overdue++
-				}
-			}
+	// Faktur lewat tempo — baca purchase_invoices, BUKAN stock_movements.
+	//
+	// Sampai 29 Sep 2026 blok ini menghitung dari `stock_movements.due_date`
+	// (skema faktur lama). Alur faktur sekarang tidak menulis movement sama
+	// sekali, jadi angka ini selalu 0 dan digest tidak pernah menyebut faktur.
+	// Batas bawah sengaja tidak dipasang — tunggakan lama tetap dihitung.
+	today := time.Now().Format("2006-01-02")
+	if invoices, _, err := s.PurchaseInvRepo.FindAll(repository.InvoiceFilter{
+		Status:    "unpaid",
+		To:        today,
+		DateField: "due",
+		Limit:     500,
+	}); err == nil && len(invoices) > 0 {
+		var totalDue float64
+		for _, inv := range invoices {
+			totalDue += inv.TotalAmount
 		}
-		if overdue > 0 {
-			alerts = append(alerts, fmt.Sprintf("%d invoice jatuh tempo", overdue))
-		}
+		alerts = append(alerts, fmt.Sprintf("%d faktur jatuh tempo (total Rp %.0f)", len(invoices), totalDue))
 	}
 
 	if len(alerts) == 0 {

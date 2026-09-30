@@ -53,7 +53,7 @@ func (s *EcomCartService) AddItem(userID string, req dto.CartAddRequest) (*dto.C
 	if err == nil {
 		// Existing row — increment quantity
 		newQty := existing.Quantity + req.Quantity
-		if newQty > product.StockEcom {
+		if newQty > product.Stock {
 			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Stok tidak cukup"}
 		}
 		existing.Quantity = newQty
@@ -61,7 +61,7 @@ func (s *EcomCartService) AddItem(userID string, req dto.CartAddRequest) (*dto.C
 			return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to update cart"}
 		}
 	} else {
-		if req.Quantity > product.StockEcom {
+		if req.Quantity > product.Stock {
 			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Stok tidak cukup"}
 		}
 		newItem := entity.EcomCartItem{
@@ -94,7 +94,7 @@ func (s *EcomCartService) UpdateItem(userID, itemID string, req dto.CartUpdateRe
 		if req.Quantity < item.Product.EcomMinOrder {
 			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Jumlah kurang dari minimum order"}
 		}
-		if req.Quantity > item.Product.StockEcom {
+		if req.Quantity > item.Product.Stock {
 			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Stok tidak cukup"}
 		}
 	}
@@ -145,10 +145,10 @@ func (s *EcomCartService) buildResponse(items []entity.EcomCartItem) *dto.CartRe
 		if !p.EcomIsAvailable {
 			unavailable = true
 			unavailableReason = "Produk sudah tidak tersedia online"
-		} else if p.StockEcom == 0 {
+		} else if p.Stock == 0 {
 			unavailable = true
 			unavailableReason = "Stok habis"
-		} else if it.Quantity > p.StockEcom {
+		} else if it.Quantity > p.Stock {
 			unavailable = true
 			unavailableReason = "Stok tidak cukup"
 		}
@@ -163,7 +163,7 @@ func (s *EcomCartService) buildResponse(items []entity.EcomCartItem) *dto.CartRe
 			Quantity:          it.Quantity,
 			Price:             price,
 			MemberPrice:       p.EcomMemberPrice,
-			Stock:             p.StockEcom,
+			Stock:             p.Stock,
 			MinOrder:          p.EcomMinOrder,
 			WeightGrams:       p.EcomWeightGrams,
 			Subtotal:          subtotal,

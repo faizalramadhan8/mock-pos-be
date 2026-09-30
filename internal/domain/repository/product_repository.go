@@ -78,14 +78,17 @@ func (r *ProductRepository) Update(product *entity.Product) error {
 
 	// CRITICAL #2 (Bu Santi 26 Jul 2026 — insiden Sunbay Evaporasi):
 	// JANGAN pernah update kolom `stock` via path ini. Stock hanya boleh
-	// mutate via 3 flow atomic:
+	// mutate via 4 flow atomic:
 	//   1. Order Create/MarkAsPaid → `gorm.Expr("stock - ?", delta)`
 	//   2. Order Cancel/Refund → `gorm.Expr("stock + ?", delta)`
 	//   3. AdjustStock endpoint (Sesuaikan Stok, audit trail wajib)
+	//   4. Ecom checkout/cancel/refund — sejak migration 000073 stok toko dan
+	//      online satu kolom, jadi storefront juga memotong `stock` di sini.
 	// Kalau admin buka Edit Produk saat kasir lagi jual, form FE punya nilai
 	// stock lama. Save() overwrite stok yang sudah decrement → stok bocor,
 	// movement record tetap ada (double-truth). Skip kolom stock cegah bug.
-	// Same logic untuk stock_ecom (ecom checkout decrement) supaya konsisten.
+	// `stock_ecom` tetap di-Omit walau sekarang konstan 0 — cegah Save()
+	// menulis balik nilai lama kalau ada entity yang masih membawanya.
 	return r.DB.Omit("stock", "stock_ecom", "created_at").Save(product).Error
 }
 

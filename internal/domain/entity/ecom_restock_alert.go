@@ -3,7 +3,7 @@ package entity
 import "time"
 
 // EcomRestockAlert — Sprint 3 #16. Customer subscribe alert kalau produk yang
-// habis kembali tersedia. Trigger notif saat stock_ecom naik dari 0 → >0.
+// habis kembali tersedia. Trigger notif saat stok naik dari 0 → >0.
 type EcomRestockAlert struct {
 	ID         string     `gorm:"type:varchar(36);primary_key" json:"id"`
 	UserID     string     `gorm:"column:user_id;type:varchar(36);not null;index" json:"user_id"`

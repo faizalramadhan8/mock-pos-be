@@ -134,7 +134,9 @@ func calculateEarnedPoints(cashActual float64) int {
 	return int(cents/unitCents) * pointsEarnPerUnit
 }
 
-func (s *OrderService) GetAll(status string, page, limit int) ([]dto.OrderResponse, int64, *dto.ApiError) {
+// GetAll — source: "" / "all" = semua (toko + online), "pos", atau "ecom".
+// Sejak 29 Sep 2026 default-nya semua; sebelumnya ecom selalu di-exclude.
+func (s *OrderService) GetAll(status, source string, page, limit int) ([]dto.OrderResponse, int64, *dto.ApiError) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -143,7 +145,7 @@ func (s *OrderService) GetAll(status string, page, limit int) ([]dto.OrderRespon
 	}
 	offset := (page - 1) * limit
 
-	orders, total, err := s.Repo.FindAll(status, limit, offset)
+	orders, total, err := s.Repo.FindAll(status, source, limit, offset)
 	if err != nil {
 		s.Log.Error().Err(err).Msg("Failed to fetch orders")
 		return nil, 0, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to fetch orders"}
@@ -382,10 +384,17 @@ func (s *OrderService) Create(req dto.CreateOrderRequest, userID string) (*dto.O
 			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Insufficient stock for: " + product.Name}
 		}
 
-		if err := tx.Model(&entity.Product{}).Where("id = ?", item.ProductID).
-			Update("stock", gorm.Expr("stock - ?", stockDelta)).Error; err != nil {
+		// Guard `stock >= ?` di WHERE, bukan cuma pengecekan di atas. Sejak
+		// stok toko dan online digabung (migration 000073) checkout storefront
+		// bisa mengambil stok yang sama di antara baca dan tulis — tanpa guard
+		// ini stok bisa jadi minus diam-diam.
+		if res := tx.Model(&entity.Product{}).Where("id = ? AND stock >= ?", item.ProductID, stockDelta).
+			Update("stock", gorm.Expr("stock - ?", stockDelta)); res.Error != nil {
 			tx.Rollback()
 			return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to deduct stock"}
+		} else if res.RowsAffected == 0 {
+			tx.Rollback()
+			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Stok " + product.Name + " baru saja habis (mungkin terjual online). Cek ulang jumlahnya."}
 		}
 
 		// Consume FIFO batches
@@ -1304,10 +1313,14 @@ func (s *OrderService) MarkAsPaid(orderID string, req dto.MarkAsPaidRequest, use
 			tx.Rollback()
 			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Insufficient stock for: " + prod.Name}
 		}
-		if err := tx.Model(&entity.Product{}).Where("id = ?", item.ProductID).
-			Update("stock", gorm.Expr("stock - ?", stockDelta)).Error; err != nil {
+		// Guard sama dengan flow Create — lihat catatan di sana.
+		if res := tx.Model(&entity.Product{}).Where("id = ? AND stock >= ?", item.ProductID, stockDelta).
+			Update("stock", gorm.Expr("stock - ?", stockDelta)); res.Error != nil {
 			tx.Rollback()
 			return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to deduct stock"}
+		} else if res.RowsAffected == 0 {
+			tx.Rollback()
+			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Stok " + prod.Name + " baru saja habis (mungkin terjual online). Cek ulang jumlahnya."}
 		}
 		s.consumeFIFO(tx, item.ProductID, stockDelta)
 

@@ -7,6 +7,7 @@ import (
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
 	"github.com/faizalramadhan/pos-be/internal/application/usecase"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
+	"github.com/faizalramadhan/pos-be/internal/domain/repository"
 	"github.com/faizalramadhan/pos-be/pkg/util"
 	"github.com/gofiber/fiber/v2"
 	"github.com/rs/zerolog"
@@ -28,14 +29,23 @@ func NewPurchaseInvoiceController(ctx context.Context) *PurchaseInvoiceControlle
 }
 
 func (ctrl *PurchaseInvoiceController) GetAll(c *fiber.Ctx) error {
-	status := c.Query("status", "")
-	supplierID := c.Query("supplier_id", "")
-	from := c.Query("from", "")
-	to := c.Query("to", "")
 	page, _ := strconv.Atoi(c.Query("page", "1"))
 	limit, _ := strconv.Atoi(c.Query("limit", "50"))
 
-	invoices, total, fail := ctrl.Service.GetAll(status, supplierID, from, to, page, limit)
+	// date_field: "due" (default) filter jatuh tempo — untuk monitor
+	// pembayaran. "invoice" filter tanggal faktur — untuk cari arsip lama.
+	// q: cari di nomor faktur / nama supplier / catatan (29 Sep 2026).
+	filter := repository.InvoiceFilter{
+		Status:     c.Query("status", ""),
+		SupplierID: c.Query("supplier_id", ""),
+		From:       c.Query("from", ""),
+		To:         c.Query("to", ""),
+		DateField:  c.Query("date_field", "due"),
+		Search:     c.Query("q", ""),
+		Limit:      limit,
+	}
+
+	invoices, total, fail := ctrl.Service.GetAll(filter, page)
 	if fail != nil {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
 	}

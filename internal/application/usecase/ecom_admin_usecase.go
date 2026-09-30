@@ -27,7 +27,7 @@ func NewEcomAdminService(ctx context.Context, db *gorm.DB) *EcomAdminService {
 }
 
 // ListProducts — cursor pagination by created_at DESC. Search LIKE match ke
-// name / sku. Return SEMUA produk (termasuk yang stock_ecom=0 atau
+// name / sku. Return SEMUA produk (termasuk yang stoknya 0 atau
 // ecom_is_available=FALSE) supaya admin bisa toggle publish + set stok.
 func (s *EcomAdminService) ListProducts(search, cursor string, limit int) ([]dto.EcomAdminProductResponse, string, *dto.ApiError) {
 	var products []entity.Product
@@ -142,16 +142,23 @@ func (s *EcomAdminService) UpdateEcomFields(id string, req dto.EcomFieldsUpdateR
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Product not found"}
 	}
 
-	// Build updates map — hanya kolom ecom_* + stock_ecom.
-	// Pakai map (bukan struct) supaya explicit control tiap kolom + support
-	// setNULL untuk pointer field (kalau user kosongkan input).
+	// Build updates map — hanya kolom ecom_*. Pakai map (bukan struct) supaya
+	// explicit control tiap kolom + support setNULL untuk pointer field
+	// (kalau user kosongkan input).
+	//
+	// CATATAN: `stock_ecom` sengaja TIDAK lagi bisa di-patch dari sini.
+	// Sejak stok toko dan online digabung (migration 000073) angka stok cuma
+	// satu, dan satu-satunya jalur ubah stok yang sah adalah endpoint
+	// Sesuaikan Stok di POS — yang mewajibkan alasan + menulis audit trail.
+	// Kalau field ini dihidupkan lagi, panel ecom bisa menimpa stok tanpa
+	// jejak, persis insiden Sunbay 26 Jul 2026.
 	updates := map[string]interface{}{}
 
 	if req.StockEcom != nil {
-		if *req.StockEcom < 0 {
-			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Stok online tidak boleh negatif"}
+		return nil, &dto.ApiError{
+			StatusCode: fiber.ErrBadRequest,
+			Message:    "Stok sekarang digabung dengan stok toko. Ubah lewat menu Stok → Sesuaikan Stok di POS supaya tercatat alasannya.",
 		}
-		updates["stock_ecom"] = *req.StockEcom
 	}
 	if req.EcomIsAvailable != nil {
 		updates["ecom_is_available"] = *req.EcomIsAvailable
@@ -278,7 +285,7 @@ func toEcomAdminProductResponse(p *entity.Product) dto.EcomAdminProductResponse 
 		StockPOS:          p.Stock,
 		SellingPrice:      p.SellingPrice,
 		MemberPrice:       p.MemberPrice,
-		StockEcom:         p.StockEcom,
+		StockEcom:         p.Stock,
 		EcomPrice:         p.EcomPrice,
 		EcomMemberPrice:   p.EcomMemberPrice,
 		EcomIsAvailable:   p.EcomIsAvailable,

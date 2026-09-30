@@ -110,7 +110,7 @@ func (s *EcomAdminStatsService) GetDashboard() (*dto.EcomAdminDashboard, *dto.Ap
 	// Produk low-stock ecom untuk restock alert.
 	var lowStockCount int64
 	s.DB.Model(&entity.Product{}).
-		Where("deleted_at IS NULL AND is_active = 1 AND ecom_is_available = 1 AND stock_ecom > 0 AND stock_ecom <= 5").
+		Where("deleted_at IS NULL AND is_active = 1 AND ecom_is_available = 1 AND stock > 0 AND stock <= 5").
 		Count(&lowStockCount)
 	dash.LowStockCount = int(lowStockCount)
 
@@ -124,8 +124,8 @@ func (s *EcomAdminStatsService) GetLowStock(limit int) ([]dto.EcomLowStockItem, 
 	}
 	var products []entity.Product
 	if err := s.DB.
-		Where("deleted_at IS NULL AND is_active = 1 AND ecom_is_available = 1 AND stock_ecom > 0 AND stock_ecom <= 5").
-		Order("stock_ecom ASC").Limit(limit).Find(&products).Error; err != nil {
+		Where("deleted_at IS NULL AND is_active = 1 AND ecom_is_available = 1 AND stock > 0 AND stock <= 5").
+		Order("stock ASC").Limit(limit).Find(&products).Error; err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Gagal ambil low stock"}
 	}
 	out := make([]dto.EcomLowStockItem, 0, len(products))
@@ -134,7 +134,7 @@ func (s *EcomAdminStatsService) GetLowStock(limit int) ([]dto.EcomLowStockItem, 
 			ID:        p.ID,
 			Name:      p.NameID,
 			SKU:       p.SKU,
-			StockEcom: p.StockEcom,
+			StockEcom: p.Stock,
 		})
 	}
 	return out, nil

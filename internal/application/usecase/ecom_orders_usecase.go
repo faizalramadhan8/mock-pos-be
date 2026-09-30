@@ -7,12 +7,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
 	"github.com/faizalramadhan/pos-be/internal/domain/entity"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
 	"github.com/faizalramadhan/pos-be/internal/infrastructure/config"
 	"github.com/faizalramadhan/pos-be/internal/infrastructure/pg"
+	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
 )
@@ -97,12 +98,12 @@ func (s *EcomOrdersService) List(userID string) ([]dto.CustomerOrderListItem, *d
 			firstItem = o.Items[0].Name
 		}
 		row := dto.CustomerOrderListItem{
-			ID:        o.ID,
-			Total:     o.Total,
+			ID:         o.ID,
+			Total:      o.Total,
 			EcomStatus: ecomStatus,
-			ItemCount: len(o.Items),
-			FirstItem: firstItem,
-			CreatedAt: o.CreatedAt.Format(time.RFC3339),
+			ItemCount:  len(o.Items),
+			FirstItem:  firstItem,
+			CreatedAt:  o.CreatedAt.Format(time.RFC3339),
 		}
 		if o.PaymentPaidAt != nil {
 			s := o.PaymentPaidAt.Format(time.RFC3339)
@@ -115,7 +116,7 @@ func (s *EcomOrdersService) List(userID string) ([]dto.CustomerOrderListItem, *d
 
 // CancelPending — customer batalkan sendiri order yang masih pending_payment
 // (belum bayar). Marketplace pattern: cegah customer harus WA admin kalau
-// ganti pikiran sebelum bayar. Restore stock_ecom yang di-reserve saat
+// ganti pikiran sebelum bayar. Restore stok yang di-reserve saat
 // CreateOrder. Post-paid orders TIDAK bisa cancel via endpoint ini (admin
 // yang handle refund flow terpisah).
 func (s *EcomOrdersService) CancelPending(userID, orderID string) (*dto.CustomerOrderDetail, *dto.ApiError) {
@@ -143,15 +144,32 @@ func (s *EcomOrdersService) CancelPending(userID, orderID string) (*dto.Customer
 		}
 	}()
 
-	// Restore stock_ecom untuk semua item.
+	// Kembalikan stok yang di-reserve saat checkout. Sejak migration 000073
+	// pool-nya sama dengan stok toko, jadi barangnya langsung bisa dijual
+	// kasir lagi — dan pergerakannya dicatat supaya tidak muncul sebagai
+	// "stok naik sendiri" di tab Pergerakan Stok.
 	for _, it := range order.Items {
 		if it.ProductID == "" {
 			continue
 		}
 		if err := tx.Model(&entity.Product{}).Where("id = ?", it.ProductID).
-			Update("stock_ecom", gorm.Expr("stock_ecom + ?", it.Quantity)).Error; err != nil {
+			Update("stock", gorm.Expr("stock + ?", it.Quantity)).Error; err != nil {
 			tx.Rollback()
 			return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Gagal restore stok"}
+		}
+		if err := tx.Create(&entity.StockMovement{
+			ID:        uuid.New().String(),
+			ProductID: it.ProductID,
+			Type:      "in",
+			Quantity:  it.Quantity,
+			UnitType:  "individual",
+			UnitPrice: it.UnitPrice,
+			Reason:    "cancel",
+			Note:      fmt.Sprintf("Pesanan online dibatalkan customer (Order #%s)", orderID[:8]),
+			CreatedBy: userID,
+		}).Error; err != nil {
+			tx.Rollback()
+			return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Gagal catat pergerakan stok"}
 		}
 	}
 	updates := map[string]interface{}{

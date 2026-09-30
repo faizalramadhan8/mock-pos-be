@@ -3,20 +3,21 @@ package usecase
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
 	"github.com/faizalramadhan/pos-be/internal/domain/entity"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
+	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
 )
 
 // EcomAdminRefundsService — Sprint 4 Chunk 2 (31 Jul 2026).
 // Manual refund flow: Bu Santi transfer out-of-band → catat di sistem +
-// pilih item untuk restock. Update stock_ecom secara atomic.
+// pilih item untuk restock. Update stok secara atomic.
 type EcomAdminRefundsService struct {
 	DB  *gorm.DB
 	Log *zerolog.Logger
@@ -67,16 +68,30 @@ func (s *EcomAdminRefundsService) Create(adminID string, req dto.EcomRefundCreat
 		refund.Note = &req.Note
 	}
 
-	// Atomic tx: insert refund + restock stock_ecom + auto-resolve complaint (opsional).
+	// Atomic tx: insert refund + restock stok + auto-resolve complaint (opsional).
 	err := s.DB.Transaction(func(tx *gorm.DB) error {
 		if e := tx.Create(&refund).Error; e != nil {
 			return e
 		}
 		// Restock items — atomic increment via gorm.Expr (rule stock atomic).
+		// Sejak migration 000073 stok toko dan online satu pool, jadi barang
+		// retur langsung bisa dijual kasir juga.
 		for _, item := range req.RestockItems {
 			if e := tx.Model(&entity.Product{}).
 				Where("id = ?", item.ProductID).
-				Update("stock_ecom", gorm.Expr("stock_ecom + ?", item.Qty)).Error; e != nil {
+				Update("stock", gorm.Expr("stock + ?", item.Qty)).Error; e != nil {
+				return e
+			}
+			if e := tx.Create(&entity.StockMovement{
+				ID:        uuid.New().String(),
+				ProductID: item.ProductID,
+				Type:      "in",
+				Quantity:  item.Qty,
+				UnitType:  "individual",
+				Reason:    "refund",
+				Note:      fmt.Sprintf("Barang retur dari refund online (Order #%s)", req.OrderID[:8]),
+				CreatedBy: adminID,
+			}).Error; e != nil {
 				return e
 			}
 		}

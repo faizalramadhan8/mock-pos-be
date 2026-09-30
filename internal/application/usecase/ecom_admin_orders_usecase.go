@@ -7,13 +7,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
 	"github.com/faizalramadhan/pos-be/internal/domain/entity"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
 	"github.com/faizalramadhan/pos-be/internal/infrastructure/biteship"
 	"github.com/faizalramadhan/pos-be/internal/infrastructure/config"
 	"github.com/faizalramadhan/pos-be/internal/infrastructure/email"
+	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
 )
@@ -262,8 +263,8 @@ func (s *EcomAdminOrdersService) List(status, search, cursor string, limit int) 
 	}
 
 	return &dto.EcomAdminOrderListResponse{
-		Items:        items,
-		NextCursor:   nextCursor,
+		Items:          items,
+		NextCursor:     nextCursor,
 		CountsByStatus: countMap,
 	}, nil
 }
@@ -319,8 +320,19 @@ func (s *EcomAdminOrdersService) UpdateStatus(orderID, newStatus, changedBy stri
 		updates["ecom_delivered_at"] = time.Now()
 	}
 
-	// Cancel → restore stock_ecom + mark POS-side status.
-	if newStatus == "cancelled" {
+	// Cancel / expired → kembalikan stok ke pool bersama (migration 000073) +
+	// mark POS-side status. Movement-nya dicatat supaya Bu Santi bisa telusuri
+	// kenapa stok naik tanpa ada barang masuk.
+	//
+	// `expired` WAJIB ikut di sini. Sampai 30 Sep 2026 cuma `cancelled` yang
+	// restore, padahal transisi pending_payment → expired diizinkan. Dulu
+	// dampaknya kecil (cuma jatah stock_ecom), sekarang stok yang tertahan
+	// adalah stok fisik toko yang tidak bisa dijual kasir.
+	if newStatus == "cancelled" || newStatus == "expired" {
+		label := "dibatalkan admin"
+		if newStatus == "expired" {
+			label = "kedaluwarsa (tidak dibayar)"
+		}
 		var items []entity.OrderItem
 		tx.Where("order_id = ?", orderID).Find(&items)
 		for _, it := range items {
@@ -328,9 +340,23 @@ func (s *EcomAdminOrdersService) UpdateStatus(orderID, newStatus, changedBy stri
 				continue
 			}
 			if err := tx.Model(&entity.Product{}).Where("id = ?", it.ProductID).
-				Update("stock_ecom", gorm.Expr("stock_ecom + ?", it.Quantity)).Error; err != nil {
+				Update("stock", gorm.Expr("stock + ?", it.Quantity)).Error; err != nil {
 				tx.Rollback()
 				return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to restore stock"}
+			}
+			if err := tx.Create(&entity.StockMovement{
+				ID:        uuid.New().String(),
+				ProductID: it.ProductID,
+				Type:      "in",
+				Quantity:  it.Quantity,
+				UnitType:  "individual",
+				UnitPrice: it.UnitPrice,
+				Reason:    "cancel",
+				Note:      fmt.Sprintf("Pesanan online %s (Order #%s)", label, orderID[:8]),
+				CreatedBy: changedBy,
+			}).Error; err != nil {
+				tx.Rollback()
+				return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to record stock movement"}
 			}
 		}
 		updates["status"] = "cancelled"
@@ -404,12 +430,13 @@ func (s *EcomAdminOrdersService) SetShipping(orderID, awb, courier, service, cha
 // admin accidentally klik tombol yang tidak masuk akal.
 //
 // Flow customer-confirmation (28 Jul 2026, mirip Tokopedia/Shopee):
-//   shipped   → delivered  (kurir tandai sampai via Biteship webhook, atau
-//                           admin manual)
-//   delivered → completed  (customer klik "Konfirmasi Diterima")
-//   shipped   → completed  (admin force complete kalau customer complain
-//                           sudah terima tapi lupa konfirmasi — edge case)
-//   delivered → cancelled  (kalau ada dispute / komplain valid → refund flow)
+//
+//	shipped   → delivered  (kurir tandai sampai via Biteship webhook, atau
+//	                        admin manual)
+//	delivered → completed  (customer klik "Konfirmasi Diterima")
+//	shipped   → completed  (admin force complete kalau customer complain
+//	                        sudah terima tapi lupa konfirmasi — edge case)
+//	delivered → cancelled  (kalau ada dispute / komplain valid → refund flow)
 func isValidTransition(from, to string) bool {
 	allowed := map[string][]string{
 		"pending_payment": {"paid", "cancelled", "expired"},
@@ -537,9 +564,10 @@ func ptrString(p *string) string {
 // input manual dari dashboard yang salah ketik.
 //
 // Biteship courier codes umum (docs: /v1/couriers):
-//   jne, jnt (J&T Express, BUKAN "jt"), sicepat, anteraja, ninja (BUKAN
-//   "ninjaexpress"), pos (Pos Indonesia, BUKAN "posindonesia"), tiki, lion,
-//   rex, wahana, sap, gojek, grab.
+//
+//	jne, jnt (J&T Express, BUKAN "jt"), sicepat, anteraja, ninja (BUKAN
+//	"ninjaexpress"), pos (Pos Indonesia, BUKAN "posindonesia"), tiki, lion,
+//	rex, wahana, sap, gojek, grab.
 func normalizeCourierCompany(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	// Sudah code (whitelist) — pass-through.
@@ -590,16 +618,17 @@ func normalizeCourierCompany(s string) string {
 // manual dari dropdown yang salah label.
 //
 // Reference list resmi Biteship (Couriers API):
-//   jne:     reg | yes | oke | jtr...
-//   jnt:     ez (ONLY — no "reg" for J&T)
-//   sicepat: reg | best | sds | gokil
-//   ninja:   standard (no "reg" for Ninja)
-//   pos:     kilat_khusus | q9_same_day | same_day | next_day | jumbo_ekonomi
-//   anteraja: reg | same_day | next_day
-//   tiki:    eko | sds | reg | ons
-//   lion:    reg_pack | land_pack | one_pack | jago_pack | docu_pack | big_pack
-//   idexpress: reg | smd | idtruck
-//   sap:     reg | ods | sds | cargo
+//
+//	jne:     reg | yes | oke | jtr...
+//	jnt:     ez (ONLY — no "reg" for J&T)
+//	sicepat: reg | best | sds | gokil
+//	ninja:   standard (no "reg" for Ninja)
+//	pos:     kilat_khusus | q9_same_day | same_day | next_day | jumbo_ekonomi
+//	anteraja: reg | same_day | next_day
+//	tiki:    eko | sds | reg | ons
+//	lion:    reg_pack | land_pack | one_pack | jago_pack | docu_pack | big_pack
+//	idexpress: reg | smd | idtruck
+//	sap:     reg | ods | sds | cargo
 //
 // Untuk case dimana display "Reguler" dipakai untuk multiple courier dengan
 // service code beda (JNT tidak punya "reg", pakai "ez"), caller HARUS pastikan
@@ -985,7 +1014,7 @@ type BiteshipWebhookPayload struct {
 	Status      string `json:"status"`
 	WaybillID   string `json:"waybill_id"`
 	TrackingID  string `json:"tracking_id"`
-	TrackingURL string `json:"link"` // Biteship pakai "link" untuk public tracking URL
+	TrackingURL string `json:"link"`  // Biteship pakai "link" untuk public tracking URL
 	Price       int    `json:"price"` // untuk event order.price (weight adjustment)
 	Courier     struct {
 		Company    string `json:"company"`

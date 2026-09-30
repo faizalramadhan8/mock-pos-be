@@ -57,8 +57,8 @@ func (s *DashboardService) GetDashboard(role string) (*dto.DashboardResponse, *d
 		resp.LowStockItems = append(resp.LowStockItems, productService.toResponse(&p))
 	}
 
-	// Recent orders (up to 4)
-	orders, _, _ := s.OrderRepo.FindAll("", 4, 0)
+	// Recent orders (up to 4) — "" = semua sumber, toko + online.
+	orders, _, _ := s.OrderRepo.FindAll("", "", 4, 0)
 	orderService := &OrderService{Log: s.Log, Repo: s.OrderRepo}
 	for _, o := range orders {
 		resp.RecentOrders = append(resp.RecentOrders, orderService.toResponse(&o))

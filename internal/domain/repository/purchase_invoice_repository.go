@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/faizalramadhan/pos-be/internal/domain/entity"
@@ -16,33 +17,78 @@ func NewPurchaseInvoiceRepository(ctx context.Context, db *gorm.DB) *PurchaseInv
 	return &PurchaseInvoiceRepository{DB: db}
 }
 
-// FindAll dengan filter status, supplier, date range.
-// Filter + Order pakai due_date (jatuh tempo) per request Bu Santi 29 Jun
-// 2026 — owner mau monitor "apa yang akan jatuh tempo bulan ini" bukan
-// "apa yang diterbitkan bulan ini". Order: due_date ASC supaya yang paling
-// dekat jatuh tempo di atas (priority action). Faktur tanpa due_date
-// jatuh ke bawah via COALESCE.
-func (r *PurchaseInvoiceRepository) FindAll(status, supplierID, from, to string, limit, offset int) ([]entity.PurchaseInvoice, int64, error) {
+// InvoiceFilter — parameter pencarian faktur. Dibungkus struct supaya
+// penambahan filter berikutnya tidak bikin signature FindAll makin panjang.
+//
+// 29 Sep 2026 (keluhan Bu Santi "sulit cari faktur yang sudah berlalu"):
+// ditambah Search + DateField. Sebelumnya filter tanggal HANYA due_date,
+// padahal faktur lama diingat dari tanggal fakturnya, bukan jatuh temponya.
+type InvoiceFilter struct {
+	Status     string
+	SupplierID string
+	From       string // YYYY-MM-DD
+	To         string // YYYY-MM-DD
+	// DateField pilih kolom mana yang di-range: "due" (default, untuk
+	// monitor jatuh tempo) atau "invoice" (untuk cari faktur lama).
+	DateField string
+	// Search cocokkan ke nomor faktur, nama supplier, atau catatan.
+	Search string
+	Limit  int
+	Offset int
+}
+
+// FindAll dengan filter status, supplier, date range, dan pencarian teks.
+//
+// Filter tanggal default pakai due_date (jatuh tempo) per request Bu Santi
+// 29 Jun 2026 — owner mau monitor "apa yang akan jatuh tempo bulan ini".
+// DateField="invoice" mengalihkan ke invoice_date untuk pencarian arsip.
+//
+// Urutan: kalau ada Search, pakai invoice_date DESC (cari faktur = biasanya
+// yang terbaru dulu). Tanpa Search, due_date ASC supaya yang paling dekat
+// jatuh tempo naik ke atas — itu yang perlu ditindak.
+func (r *PurchaseInvoiceRepository) FindAll(f InvoiceFilter) ([]entity.PurchaseInvoice, int64, error) {
 	var invoices []entity.PurchaseInvoice
 	var total int64
 
 	q := r.DB.Model(&entity.PurchaseInvoice{})
-	if status != "" && status != "all" {
-		q = q.Where("payment_status = ?", status)
+	if f.Status != "" && f.Status != "all" {
+		q = q.Where("payment_status = ?", f.Status)
 	}
-	if supplierID != "" {
-		q = q.Where("supplier_id = ?", supplierID)
+	if f.SupplierID != "" {
+		q = q.Where("supplier_id = ?", f.SupplierID)
 	}
-	if from != "" {
-		q = q.Where("DATE(due_date) >= ?", from)
+
+	// Kolom tanggal yang di-range. "invoice" untuk arsip, else due_date.
+	dateCol := "due_date"
+	if f.DateField == "invoice" {
+		dateCol = "invoice_date"
 	}
-	if to != "" {
-		q = q.Where("DATE(due_date) <= ?", to)
+	if f.From != "" {
+		q = q.Where("DATE("+dateCol+") >= ?", f.From)
 	}
+	if f.To != "" {
+		q = q.Where("DATE("+dateCol+") <= ?", f.To)
+	}
+
+	// Pencarian teks — nomor faktur, nama supplier (subquery, karena
+	// supplier_id FK), atau catatan.
+	if s := strings.TrimSpace(f.Search); s != "" {
+		like := "%" + s + "%"
+		q = q.Where(
+			"invoice_number LIKE ? OR note LIKE ? OR supplier_id IN (SELECT id FROM suppliers WHERE name LIKE ?)",
+			like, like, like,
+		)
+	}
+
 	q.Count(&total)
 
+	order := "due_date IS NULL, due_date ASC, invoice_date DESC"
+	if strings.TrimSpace(f.Search) != "" {
+		order = "invoice_date DESC"
+	}
+
 	if err := q.Preload("Supplier").Preload("Items").Preload("Items.Product").
-		Order("due_date IS NULL, due_date ASC, invoice_date DESC").Limit(limit).Offset(offset).Find(&invoices).Error; err != nil {
+		Order(order).Limit(f.Limit).Offset(f.Offset).Find(&invoices).Error; err != nil {
 		return nil, 0, err
 	}
 	return invoices, total, nil

@@ -57,7 +57,7 @@ func (ctrl *EcomOrdersController) ConfirmReceived(c *fiber.Ctx) error {
 }
 
 // CancelPending — customer batalkan sendiri order yang masih pending_payment.
-// Restore stock_ecom otomatis, set ecom_status='cancelled'.
+// Restore stok otomatis, set ecom_status='cancelled'.
 func (ctrl *EcomOrdersController) CancelPending(c *fiber.Ctx) error {
 	id := c.Params("id")
 	claims := c.Locals("session").(*dto.JWTClaims)

@@ -49,7 +49,7 @@ func (s *EcomCategoryService) List(activeOnly bool) ([]dto.EcomCategoryResponse,
 		Select("ecom_category_id, COUNT(*) as cnt").
 		Where("deleted_at IS NULL AND ecom_category_id IS NOT NULL")
 	if activeOnly {
-		countQ = countQ.Where("is_active = 1 AND ecom_is_available = 1 AND stock_ecom > 0")
+		countQ = countQ.Where("is_active = 1 AND ecom_is_available = 1 AND stock > 0")
 	}
 	countQ.Group("ecom_category_id").Scan(&counts)
 	countMap := map[string]int{}

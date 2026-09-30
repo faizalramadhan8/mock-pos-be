@@ -15,7 +15,9 @@ import (
 
 // EcomAdminController handles admin panel untuk e-commerce Bu Santi.
 // Login gated by role IN (ecom_admin, ecom_superadmin, superadmin).
-// Product endpoints hanya bisa edit field ecom (stock_ecom, ecom_price, dst).
+// Product endpoints hanya bisa edit field ecom (ecom_price, ecom_is_available,
+// dst). Stok TIDAK termasuk — sejak migration 000073 stok toko dan online satu
+// angka, diubah lewat Sesuaikan Stok di POS supaya ada audit trail.
 // POS field (stock, selling_price) tetap dikelola di POS Inventory —
 // strict separation per keputusan Bu Santi 20 Jul 2026.
 type EcomAdminController struct {
@@ -335,8 +337,8 @@ func (ctrl *EcomAdminController) Login(c *fiber.Ctx) error {
 }
 
 // ListProducts — semua produk untuk admin manage (termasuk yang belum
-// ke-allocate stock_ecom). Beda dari public storefront yang filter
-// WHERE ecom_is_available=1 AND stock_ecom>0.
+// stoknya habis). Beda dari public storefront yang filter
+// WHERE ecom_is_available=1 AND stock>0.
 func (ctrl *EcomAdminController) ListProducts(c *fiber.Ctx) error {
 	search := c.Query("search", "")
 	cursor := c.Query("cursor", "")
@@ -370,7 +372,7 @@ func (ctrl *EcomAdminController) GetProduct(c *fiber.Ctx) error {
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "successfully", Body: resp})
 }
 
-// UpdateEcomFields — patch HANYA field ecom_* + stock_ecom. Field POS
+// UpdateEcomFields — patch HANYA field ecom_*. Field POS (termasuk stok)
 // (stock, selling_price, member_price, name, sku, category, dst) TIDAK
 // disentuh — dikelola di POS. Cegah admin ecom accidentally ubah harga POS.
 func (ctrl *EcomAdminController) UpdateEcomFields(c *fiber.Ctx) error {

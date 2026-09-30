@@ -96,7 +96,7 @@ func UseEcomAdminRouter(ctx context.Context, r fiber.Router) {
 }
 
 // UseEcomPublicRouter — public storefront endpoints (no auth). Customer
-// browse produk sebelum login. Filter enforce ecom_is_available + stock_ecom>0.
+// browse produk sebelum login. Filter enforce ecom_is_available + stock>0.
 func UseEcomPublicRouter(ctx context.Context, r fiber.Router) {
 	ctrl := handler.NewEcomPublicController(ctx)
 	reviewCtrl := handler.NewEcomReviewController(ctx)

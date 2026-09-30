@@ -16,14 +16,31 @@ func NewOrderRepository(ctx context.Context, db *gorm.DB) *OrderRepository {
 	return &OrderRepository{DB: db}
 }
 
-func (r *OrderRepository) FindAll(status string, limit, offset int) ([]entity.Order, int64, error) {
+// FindAll — daftar order dengan filter status + sumber.
+//
+// Riwayat: 29 Jul 2026 ecom sengaja di-exclude dari POS ("cegah
+// pending_payment ecom masuk Total Pendapatan"). Bu Santi 17 Sep 2026 minta
+// kebalikannya — digabung dengan penanda: "Paling nanti di kasih tanda aja
+// ya. Antara e commerce dan offline."
+//
+// Aman digabung karena `orders.status` konsisten lintas sumber: ecom yang
+// dibayar ikut di-set `completed` (lihat ecom_checkout_usecase PGWebhook),
+// yang belum bayar tetap `pending`. Jadi agregat omzet yang memfilter
+// `status='completed'` tidak akan kemasukan pending_payment ecom.
+//
+// source: "" / "all" = semua, "pos" = toko, "ecom" = online.
+func (r *OrderRepository) FindAll(status, source string, limit, offset int) ([]entity.Order, int64, error) {
 	var orders []entity.Order
 	var total int64
 
-	// 29 Jul 2026: exclude ecom orders dari POS Pesanan. Bu Santi kelola ecom
-	// di panel Admin Ecom terpisah — cegah pending_payment ecom masuk
-	// "Total Pendapatan" POS + list Pesanan bikin confused.
-	query := r.DB.Model(&entity.Order{}).Where("(order_source = 'pos' OR order_source IS NULL OR order_source = '')")
+	query := r.DB.Model(&entity.Order{})
+	switch source {
+	case "pos":
+		// Order lama (sebelum kolom order_source ada) dianggap POS.
+		query = query.Where("(order_source = 'pos' OR order_source IS NULL OR order_source = '')")
+	case "ecom":
+		query = query.Where("order_source = 'ecom'")
+	}
 	if status != "" && status != "all" {
 		query = query.Where("status = ?", status)
 	}

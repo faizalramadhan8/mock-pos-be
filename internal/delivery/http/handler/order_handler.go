@@ -29,10 +29,13 @@ func NewOrderController(ctx context.Context) *OrderController {
 
 func (ctrl *OrderController) GetAll(c *fiber.Ctx) error {
 	status := c.Query("status", "")
+	// source: "" / "all" = toko + online digabung (default sejak 29 Sep 2026),
+	// "pos" = toko saja, "ecom" = online saja.
+	source := c.Query("source", "")
 	page, _ := strconv.Atoi(c.Query("page", "1"))
 	limit, _ := strconv.Atoi(c.Query("limit", "20"))
 
-	orders, total, fail := ctrl.Service.GetAll(status, page, limit)
+	orders, total, fail := ctrl.Service.GetAll(status, source, page, limit)
 	if fail != nil {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
 	}

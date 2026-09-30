@@ -102,8 +102,8 @@ func (s *EcomRestockAlertService) TriggerRestockNotif(productID string) {
 	if err := s.DB.Where("id = ?", productID).First(&product).Error; err != nil {
 		return
 	}
-	// Skip kalau stock_ecom masih 0 (mungkin dispatch dipanggil salah).
-	if product.StockEcom <= 0 {
+	// Skip kalau stok masih 0 (mungkin dispatch dipanggil salah).
+	if product.Stock <= 0 {
 		return
 	}
 

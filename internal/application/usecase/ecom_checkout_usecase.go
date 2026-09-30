@@ -45,7 +45,7 @@ func NewEcomCheckoutService(ctx context.Context, db *gorm.DB) *EcomCheckoutServi
 }
 
 // CreateOrder — end-to-end checkout: validate cart + address, create Order,
-// decrement stock_ecom (reserve), clear cart, request Snap token.
+// decrement stock (reserve), clear cart, request Snap token.
 // Kalau Midtrans belum configured, mode "manual" (customer transfer bank
 // manual, Bu Santi verify).
 // CartSubtotal — compute total dari cart user pakai harga effective ecom.
@@ -143,9 +143,9 @@ func (s *EcomCheckoutService) CreateOrder(userID string, userEmail, userPhone, u
 			tx.Rollback()
 			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: fmt.Sprintf("Produk %s tidak tersedia", p.NameID)}
 		}
-		if ln.Quantity > p.StockEcom {
+		if ln.Quantity > p.Stock {
 			tx.Rollback()
-			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: fmt.Sprintf("Stok %s tidak cukup (tersisa %d)", p.NameID, p.StockEcom)}
+			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: fmt.Sprintf("Stok %s tidak cukup (tersisa %d)", p.NameID, p.Stock)}
 		}
 		price := p.SellingPrice
 		if p.EcomPrice != nil {
@@ -165,11 +165,38 @@ func (s *EcomCheckoutService) CreateOrder(userID string, userEmail, userPhone, u
 			PurchasePrice: p.PurchasePrice,
 		})
 
-		// Reserve stock — decrement stock_ecom (POS stock tidak affected).
-		if err := tx.Model(&entity.Product{}).Where("id = ?", p.ID).
-			Update("stock_ecom", gorm.Expr("stock_ecom - ?", ln.Quantity)).Error; err != nil {
+		// Reserve stock. Sejak stok toko dan online digabung (migration 000073)
+		// kasir POS bisa menjual barang yang sama persis saat customer online
+		// checkout, jadi pengecekan `ln.Quantity > p.Stock` di atas saja tidak
+		// cukup — angka itu sudah basi begitu dibaca. Guard `stock >= ?` di
+		// WHERE membuat decrement gagal (RowsAffected 0) alih-alih membuat stok
+		// minus, dan seluruh checkout di-rollback.
+		res := tx.Model(&entity.Product{}).Where("id = ? AND stock >= ?", p.ID, ln.Quantity).
+			Update("stock", gorm.Expr("stock - ?", ln.Quantity))
+		if res.Error != nil {
 			tx.Rollback()
 			return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to reserve stock"}
+		}
+		if res.RowsAffected == 0 {
+			tx.Rollback()
+			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: fmt.Sprintf("Stok %s baru saja habis — silakan kurangi jumlahnya", p.NameID)}
+		}
+		// Catat pergerakan supaya penjualan online ikut muncul di tab
+		// "Pergerakan Stok" POS. Sebelum stok digabung, stock_ecom bergerak
+		// tanpa jejak apa pun di audit trail toko.
+		if err := tx.Create(&entity.StockMovement{
+			ID:        uuid.New().String(),
+			ProductID: p.ID,
+			Type:      "out",
+			Quantity:  ln.Quantity,
+			UnitType:  "individual",
+			UnitPrice: price,
+			Reason:    "sale",
+			Note:      fmt.Sprintf("Penjualan online (Order #%s)", orderID[:8]),
+			CreatedBy: userID,
+		}).Error; err != nil {
+			tx.Rollback()
+			return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to record stock movement"}
 		}
 		if ln.CartID != "" {
 			consumedCartIDs = append(consumedCartIDs, ln.CartID)
@@ -477,7 +504,18 @@ func (s *EcomCheckoutService) HandlePGNotification(notif pg.WebhookPayload) *dto
 				continue
 			}
 			tx.Model(&entity.Product{}).Where("id = ?", it.ProductID).
-				Update("stock_ecom", gorm.Expr("stock_ecom + ?", it.Quantity))
+				Update("stock", gorm.Expr("stock + ?", it.Quantity))
+			tx.Create(&entity.StockMovement{
+				ID:        uuid.New().String(),
+				ProductID: it.ProductID,
+				Type:      "in",
+				Quantity:  it.Quantity,
+				UnitType:  "individual",
+				UnitPrice: it.UnitPrice,
+				Reason:    "cancel",
+				Note:      fmt.Sprintf("Pembayaran online gagal/kedaluwarsa (Order #%s)", orderID[:8]),
+				CreatedBy: order.CreatedBy,
+			})
 		}
 	}
 
