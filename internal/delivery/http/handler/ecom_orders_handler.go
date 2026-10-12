@@ -68,6 +68,26 @@ func (ctrl *EcomOrdersController) CancelPending(c *fiber.Ctx) error {
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Pesanan dibatalkan", Body: resp})
 }
 
+// SubmitPaymentProof — customer kirim bukti transfer untuk pesanannya.
+// Body: {"payment_proof": "/storage/payment-proof/xxx.jpg"} — URL dari
+// POST /upload?type=payment-proof.
+func (ctrl *EcomOrdersController) SubmitPaymentProof(c *fiber.Ctx) error {
+	id := c.Params("id")
+	claims := c.Locals("session").(*dto.JWTClaims)
+	var req struct {
+		PaymentProof string `json:"payment_proof"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{
+			Code: fiber.ErrBadRequest.Code, Message: "Format permintaan tidak valid", Error: err.Error()})
+	}
+	resp, fail := ctrl.Service.SubmitPaymentProof(claims.ID, id, req.PaymentProof)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Bukti transfer terkirim", Body: resp})
+}
+
 // RetryPayment — regenerate payment_url PG untuk order pending_payment yang
 // link-nya expired. Auto-sync status kalau ternyata PG bilang sudah PAID.
 func (ctrl *EcomOrdersController) RetryPayment(c *fiber.Ctx) error {

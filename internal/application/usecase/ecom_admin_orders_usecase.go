@@ -57,6 +57,12 @@ func NewEcomAdminOrdersService(ctx context.Context, db *gorm.DB) *EcomAdminOrder
 	}
 }
 
+// shippingClient — klien Biteship dengan titik asal dari ecom_settings.
+// Lihat biteshipWithStoreOrigin di ecom_shipping_usecase.go.
+func (s *EcomAdminOrdersService) shippingClient() *biteship.Client {
+	return biteshipWithStoreOrigin(s.DB, s.Biteship)
+}
+
 // SendOrderStatusEmail — kirim email notif ke customer setiap kali order
 // status berubah ke milestone penting: shipped, delivered, completed.
 // Best-effort (goroutine, no block webhook). Reuse Brevo — kalau not
@@ -285,6 +291,53 @@ func (s *EcomAdminOrdersService) GetDetail(orderID string) (*dto.CustomerOrderDe
 	return buildEcomOrderDetail(&order), nil
 }
 
+// restoreStockForCancelled — kembalikan stok pesanan yang batal/retur +
+// tulis jejaknya di Pergerakan Stok. Dipanggil di dalam transaksi pemanggil.
+//
+// Dipisah jadi satu fungsi karena pembatalan punya DUA jalur yang sempat
+// menyimpang (ditemukan 12 Okt 2026): admin menekan Batal lewat UpdateStatus
+// (mengembalikan stok, benar), dan kurir melaporkan returned/disposed/
+// cancelled lewat webhook Biteship (TIDAK mengembalikan stok sama sekali).
+// Akibat jalur kedua: barang fisik kembali ke Bu Santi, tapi sistem tetap
+// menganggapnya terjual — stok kurang, dan `orders.status` tetap 'completed'
+// sehingga nilainya ikut terhitung sebagai omzet di Arus Kas, Laba Rugi,
+// dan Beranda.
+//
+// Jangan tulis ulang logika ini di tempat ketiga; panggil fungsi ini.
+func restoreStockForCancelled(tx *gorm.DB, orderID, label, actorID string) error {
+	var items []entity.OrderItem
+	if err := tx.Where("order_id = ?", orderID).Find(&items).Error; err != nil {
+		return err
+	}
+	shortID := orderID
+	if len(shortID) > 8 {
+		shortID = shortID[:8]
+	}
+	for _, it := range items {
+		if it.ProductID == "" {
+			continue // baris tebus poin — stoknya di tabel lain
+		}
+		if err := tx.Model(&entity.Product{}).Where("id = ?", it.ProductID).
+			Update("stock", gorm.Expr("stock + ?", it.Quantity)).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(&entity.StockMovement{
+			ID:        uuid.New().String(),
+			ProductID: it.ProductID,
+			Type:      "in",
+			Quantity:  it.Quantity,
+			UnitType:  "individual",
+			UnitPrice: it.UnitPrice,
+			Reason:    "cancel",
+			Note:      fmt.Sprintf("Pesanan online %s (Order #%s)", label, shortID),
+			CreatedBy: actorID,
+		}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // UpdateStatus — admin transition state. Validate transisi allowed supaya
 // admin tidak accidentally "mark shipped" order yang belum bayar.
 func (s *EcomAdminOrdersService) UpdateStatus(orderID, newStatus, changedBy string) (*dto.CustomerOrderDetail, *dto.ApiError) {
@@ -333,31 +386,9 @@ func (s *EcomAdminOrdersService) UpdateStatus(orderID, newStatus, changedBy stri
 		if newStatus == "expired" {
 			label = "kedaluwarsa (tidak dibayar)"
 		}
-		var items []entity.OrderItem
-		tx.Where("order_id = ?", orderID).Find(&items)
-		for _, it := range items {
-			if it.ProductID == "" {
-				continue
-			}
-			if err := tx.Model(&entity.Product{}).Where("id = ?", it.ProductID).
-				Update("stock", gorm.Expr("stock + ?", it.Quantity)).Error; err != nil {
-				tx.Rollback()
-				return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to restore stock"}
-			}
-			if err := tx.Create(&entity.StockMovement{
-				ID:        uuid.New().String(),
-				ProductID: it.ProductID,
-				Type:      "in",
-				Quantity:  it.Quantity,
-				UnitType:  "individual",
-				UnitPrice: it.UnitPrice,
-				Reason:    "cancel",
-				Note:      fmt.Sprintf("Pesanan online %s (Order #%s)", label, orderID[:8]),
-				CreatedBy: changedBy,
-			}).Error; err != nil {
-				tx.Rollback()
-				return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to record stock movement"}
-			}
+		if err := restoreStockForCancelled(tx, orderID, label, changedBy); err != nil {
+			tx.Rollback()
+			return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to restore stock"}
 		}
 		updates["status"] = "cancelled"
 	}
@@ -471,6 +502,7 @@ func buildEcomOrderDetail(order *entity.Order) *dto.CustomerOrderDetail {
 		Total:        order.Total,
 		EcomStatus:   ecomStatus,
 		CreatedAt:    order.CreatedAt.Format(time.RFC3339),
+		PaymentProof: order.PaymentProof,
 	}
 	if order.EcomDeliveredAt != nil {
 		dstr := order.EcomDeliveredAt.Format(time.RFC3339)
@@ -680,7 +712,7 @@ func normalizeCourierService(s string) string {
 //     saat kurir konfirmasi pickup). Admin bisa mark shipped manual kalau
 //     tidak sabar.
 func (s *EcomAdminOrdersService) CreateBiteshipShipment(orderID, changedBy string) (*dto.CustomerOrderDetail, *dto.ApiError) {
-	if !s.Biteship.CanCreateOrder() {
+	if !s.shippingClient().CanCreateOrder() {
 		return nil, &dto.ApiError{
 			StatusCode: fiber.ErrBadRequest,
 			Message:    "Biteship shipper info belum di-set (BITESHIP_ORIGIN_NAME/PHONE/ADDRESS). Cek .env di server.",
@@ -817,7 +849,7 @@ func (s *EcomAdminOrdersService) CreateBiteshipShipment(orderID, changedBy strin
 		ReferenceID:        orderID, // supaya webhook bisa lookup order kita
 	}
 
-	resp, err := s.Biteship.CreateOrder(req)
+	resp, err := s.shippingClient().CreateOrder(req)
 	if err != nil {
 		s.Log.Error().Err(err).Str("order_id", orderID).Msg("biteship create order failed")
 		return nil, &dto.ApiError{StatusCode: fiber.ErrBadGateway, Message: "Gagal buat order Biteship: " + err.Error()}
@@ -901,6 +933,15 @@ func (s *EcomAdminOrdersService) HandleBiteshipWebhook(payload BiteshipWebhookPa
 	// Map Biteship status → ecom_status kita.
 	// Biteship status: allocated, picking_up, picked, dropping_off, delivered,
 	// returned, cancelled, on_hold, disposed.
+	// Paket berbalik arah — belum terminal, tapi admin wajib tahu. Tanpa
+	// baris ini status `return_in_transit` lewat tanpa jejak apa pun.
+	if payload.Status == "return_in_transit" {
+		s.Log.Warn().
+			Str("order_id", order.ID).
+			Str("awb", payload.WaybillID).
+			Msg("biteship: paket sedang diretur ke pengirim — siapkan penerimaan barang")
+	}
+
 	if payload.Status != "" {
 		mapped := mapBiteshipStatus(payload.Status, ptrString(order.EcomStatus))
 		if mapped != "" {
@@ -909,6 +950,29 @@ func (s *EcomAdminOrdersService) HandleBiteshipWebhook(payload BiteshipWebhookPa
 			// dan FE reminder tau umur-nya.
 			if mapped == "delivered" {
 				updates["ecom_delivered_at"] = time.Now()
+			}
+			// Batal/retur/musnah dari kurir = barang TIDAK jadi sampai ke
+			// customer. Sampai 12 Okt 2026 jalur ini cuma menulis ecom_status,
+			// jadi stoknya tidak pernah kembali dan `orders.status` tetap
+			// 'completed' — nilainya masih terhitung omzet padahal barangnya
+			// balik ke rak. Sekarang diperlakukan sama persis dengan admin
+			// menekan Batal.
+			if mapped == "cancelled" {
+				label := map[string]string{
+					"returned": "diretur kurir",
+					"disposed": "dimusnahkan kurir",
+				}[payload.Status]
+				if label == "" {
+					label = "dibatalkan kurir"
+				}
+				if err := s.DB.Transaction(func(tx *gorm.DB) error {
+					return restoreStockForCancelled(tx, order.ID, label, order.CreatedBy)
+				}); err != nil {
+					s.Log.Error().Err(err).Str("order_id", order.ID).
+						Msg("biteship webhook: gagal kembalikan stok pesanan batal")
+					return &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to restore stock"}
+				}
+				updates["status"] = "cancelled"
 			}
 		}
 	}
@@ -955,14 +1019,14 @@ func (s *EcomAdminOrdersService) SyncBiteshipStatus(orderID, changedBy string) (
 	// tracking_id — mis. pre-migration 000062 atau webhook belum fire.
 	var tracking *biteship.TrackingStatus
 	if order.ShippingTrackingID != nil && *order.ShippingTrackingID != "" {
-		t, err := s.Biteship.GetTracking(*order.ShippingTrackingID)
+		t, err := s.shippingClient().GetTracking(*order.ShippingTrackingID)
 		if err != nil {
 			s.Log.Error().Err(err).Str("order_id", orderID).Msg("biteship sync GetTracking failed")
 			return nil, &dto.ApiError{StatusCode: fiber.ErrBadGateway, Message: "Gagal ambil tracking dari Biteship: " + err.Error()}
 		}
 		tracking = t
 	} else {
-		t, err := s.Biteship.GetOrder(*order.BiteshipOrderID)
+		t, err := s.shippingClient().GetOrder(*order.BiteshipOrderID)
 		if err != nil {
 			s.Log.Error().Err(err).Str("order_id", orderID).Msg("biteship sync GetOrder failed")
 			return nil, &dto.ApiError{StatusCode: fiber.ErrBadGateway, Message: "Gagal ambil status dari Biteship: " + err.Error()}
@@ -1047,7 +1111,7 @@ func mapBiteshipStatus(biteshipStatus, current string) string {
 		return ""
 	}
 	switch biteshipStatus {
-	case "allocated", "picking_up", "on_hold":
+	case "confirmed", "allocated", "picking_up", "on_hold":
 		// Kurir sudah accept, sedang proses pickup — di kita masih "processing".
 		if current == "paid" {
 			return "processing"
@@ -1061,6 +1125,12 @@ func mapBiteshipStatus(biteshipStatus, current string) string {
 		// kurir kadang salah tag (dititip, salah alamat, dsb). Fallback:
 		// cron auto-complete 7 hari kalau customer lupa.
 		return "delivered"
+	case "return_in_transit":
+		// Paket sedang dibawa balik ke Bu Santi. BELUM terminal — barangnya
+		// masih di jalan, jadi stok belum boleh dikembalikan (nanti dobel saat
+		// `returned` tiba). Status dibiarkan apa adanya; pemanggil menulis
+		// peringatan ke log supaya admin tahu ada paket yang berbalik arah.
+		return ""
 	case "cancelled", "returned", "disposed":
 		return "cancelled"
 	}

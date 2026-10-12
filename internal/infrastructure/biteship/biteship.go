@@ -66,6 +66,42 @@ func (c *Client) WithShipper(name, phone, address, note, webhookSecret string) *
 	return c
 }
 
+// WithOriginOverride — timpa titik asal pengiriman dengan nilai dari
+// ecom_settings. Field yang kosong DIBIARKAN memakai nilai env, jadi admin
+// cukup mengisi yang ingin diubah.
+//
+// Kenapa ada (9 Okt 2026): panel admin ecom punya isian "Alamat Pickup",
+// "No HP Pickup", dan "Biteship Area ID" dengan keterangan "Kurir jemput di
+// sini" — tapi backend tidak pernah membacanya. Satu-satunya sumber titik
+// asal adalah variabel lingkungan, yang berarti memindahkan alamat
+// penjemputan menuntut edit `.env` + restart backend. Bu Santi mengisi
+// layarnya, tidak terjadi apa-apa, dan tidak ada pesan salah apa pun.
+//
+// Mengembalikan SALINAN supaya permintaan yang jalan bersamaan tidak saling
+// menimpa titik asal satu sama lain.
+func (c *Client) WithOriginOverride(areaID, postal, name, phone, address, note string) *Client {
+	cp := *c
+	if areaID != "" {
+		cp.OriginArea = areaID
+	}
+	if postal != "" {
+		cp.OriginPostal = postal
+	}
+	if name != "" {
+		cp.OriginName = name
+	}
+	if phone != "" {
+		cp.OriginPhone = phone
+	}
+	if address != "" {
+		cp.OriginAddress = address
+	}
+	if note != "" {
+		cp.OriginNote = note
+	}
+	return &cp
+}
+
 // CanCreateOrder — semua field wajib untuk POST /orders sudah di-set.
 // Rate API cuma butuh area/postal + items; Order API butuh full shipper info +
 // destination contact/address.

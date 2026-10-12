@@ -354,21 +354,49 @@ func (s *EcomCheckoutService) CreateOrder(userID string, userEmail, userPhone, u
 		Item:           pgItems,
 	}
 
-	pgCtx, pgCancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer pgCancel()
-	pgResp, pgErr := s.PG.CreatePayment(pgCtx, pgReq)
-	if pgErr != nil {
-		s.Log.Warn().Err(pgErr).Str("order_id", orderID).Str("channel", req.PaymentChannel).Msg("PG create payment failed, fallback manual")
+	// Saklar "Metode Pembayaran" di panel admin ecom (`payment_pg_enabled`).
+	// Sampai 12 Okt 2026 saklar itu tersimpan tapi TIDAK PERNAH DIBACA —
+	// checkout selalu memanggil payment gateway apa pun isinya. Bu Santi
+	// sekarang memakai transfer manual, jadi saklarnya harus benar-benar
+	// mematikan PG, bukan sekadar hiasan di layar.
+	//
+	// Best-effort: kalau baris pengaturannya tidak terbaca, anggap PG aktif
+	// (perilaku lama) supaya checkout tidak mati gara-gara tabel pengaturan.
+	pgEnabled := true
+	var ecomSt entity.EcomSettings
+	if err := s.DB.Where("id = ?", "default").First(&ecomSt).Error; err == nil {
+		pgEnabled = ecomSt.PaymentPgEnabled
 	}
 
 	paymentMode := "pg"
 	paymentURL := ""
+	paymentRef := "" // PaymentID dari PG; kosong di mode manual
 	channelSaved := req.PaymentChannel
 	categorySaved := req.PaymentChannelCategory
-	if s.PG.IsConfigured() && pgResp != nil && pgResp.PaymentURL != "" {
-		paymentURL = pgResp.PaymentURL
-	} else {
+
+	if !pgEnabled {
+		// Transfer manual: jangan panggil PG sama sekali. Memanggilnya tetap
+		// akan gagal dan jatuh ke manual juga, tapi membuang 20 detik timeout
+		// di depan customer dan mengotori log dengan error yang bukan error.
 		paymentMode = "manual"
+		channelSaved = ""
+		categorySaved = ""
+		s.Log.Info().Str("order_id", orderID).Msg("PG dimatikan di pengaturan — checkout mode transfer manual")
+	} else {
+		pgCtx, pgCancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer pgCancel()
+		pgResp, pgErr := s.PG.CreatePayment(pgCtx, pgReq)
+		if pgErr != nil {
+			s.Log.Warn().Err(pgErr).Str("order_id", orderID).Str("channel", req.PaymentChannel).Msg("PG create payment failed, fallback manual")
+		}
+		if s.PG.IsConfigured() && pgResp != nil && pgResp.PaymentURL != "" {
+			paymentURL = pgResp.PaymentURL
+		} else {
+			paymentMode = "manual"
+		}
+		if pgResp != nil {
+			paymentRef = pgResp.PaymentID
+		}
 	}
 	// Save PG snapshot ke order supaya retry payment + admin view punya konteks.
 	pgUpdate := map[string]interface{}{
@@ -378,8 +406,8 @@ func (s *EcomCheckoutService) CreateOrder(userID string, userEmail, userPhone, u
 	if paymentURL != "" {
 		pgUpdate["payment_url"] = paymentURL
 	}
-	if pgResp != nil && pgResp.PaymentID != "" {
-		pgUpdate["payment_reference"] = pgResp.PaymentID
+	if paymentRef != "" {
+		pgUpdate["payment_reference"] = paymentRef
 	}
 	if err := tx.Model(&entity.Order{}).Where("id = ?", orderID).Updates(pgUpdate).Error; err != nil {
 		s.Log.Warn().Err(err).Msg("Failed to save PG snapshot")

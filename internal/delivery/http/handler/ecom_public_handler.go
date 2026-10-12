@@ -7,6 +7,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
 	"github.com/faizalramadhan/pos-be/internal/application/usecase"
+	"github.com/faizalramadhan/pos-be/internal/domain/entity"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
@@ -17,6 +18,7 @@ import (
 // produk yang tayang di ecom (ecom_is_available + stock > 0).
 type EcomPublicController struct {
 	Log         *zerolog.Logger
+	DB          *gorm.DB
 	Service     *usecase.EcomPublicService
 	SettingsSvc *usecase.EcomAdminSettingsService
 }
@@ -26,6 +28,7 @@ func NewEcomPublicController(ctx context.Context) *EcomPublicController {
 	db := ctx.Value(enum.GormCtxKey).(*gorm.DB)
 	return &EcomPublicController{
 		Log:         logger,
+		DB:          db,
 		Service:     usecase.NewEcomPublicService(ctx, db),
 		SettingsSvc: usecase.NewEcomAdminSettingsService(ctx, db),
 	}
@@ -49,6 +52,21 @@ func (ctrl *EcomPublicController) PublicSettings(c *fiber.Ctx) error {
 		_ = json.Unmarshal([]byte(*s.FeaturedCategoryIDs), &featuredCatIDs)
 	}
 
+	// Rekening transfer manual — diambil dari tabel POS `bank_accounts`
+	// supaya Bu Santi mengelolanya di satu tempat saja (Pengaturan POS),
+	// bukan mengetik ulang di panel ecom dan berisiko beda nomor.
+	bankAccounts := []fiber.Map{}
+	var accounts []entity.BankAccount
+	if err := ctrl.DB.Order("created_at ASC").Find(&accounts).Error; err == nil {
+		for _, a := range accounts {
+			bankAccounts = append(bankAccounts, fiber.Map{
+				"bank_name":      a.BankName,
+				"account_number": a.AccountNumber,
+				"account_holder": a.AccountHolder,
+			})
+		}
+	}
+
 	body := fiber.Map{
 		"min_order_amount":              s.MinOrderAmount,
 		"wa_contact_number":             s.WAContactNumber,
@@ -60,6 +78,15 @@ func (ctrl *EcomPublicController) PublicSettings(c *fiber.Ctx) error {
 		"store_name":                    s.StoreName,
 		"payment_pg_enabled":            s.PaymentPgEnabled,
 		"payment_manual_enabled":        s.PaymentManualEnabled,
+		// Rekening tujuan transfer manual. Tanpa ini customer tidak punya
+		// cara membayar sama sekali: halaman pesanan cuma bisa menulis
+		// "transfer ke rekening toko" tanpa menyebut rekening yang mana.
+		// Datanya sudah lama ada di tabel `bank_accounts` (dipakai struk WA
+		// POS), hanya belum pernah sampai ke storefront.
+		//
+		// Aman dipublikasikan: nomor rekening tujuan memang harus diketahui
+		// pembeli. Yang TIDAK boleh ikut cuma kredensial/kunci API.
+		"bank_accounts": bankAccounts,
 		// Sprint 5 Chunk 7 — Homepage CMS.
 		"hero_kicker":            s.HeroKicker,
 		"hero_title":             s.HeroTitle,

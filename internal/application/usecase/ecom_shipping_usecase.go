@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
@@ -47,6 +48,46 @@ func NewBiteshipClient(cfg *config.Config) *biteship.Client {
 	)
 }
 
+// biteshipWithStoreOrigin — klien Biteship dengan titik asal diambil dari
+// ecom_settings (yang bisa Bu Santi ubah sendiri di panel admin), jatuh ke
+// nilai env untuk field yang belum diisi.
+//
+// Dibaca per pemakaian, bukan sekali saat service dibuat: kalau di-cache,
+// mengubah alamat penjemputan tetap menuntut restart backend — persis
+// keterbatasan yang bikin isian di layar itu percuma selama ini.
+//
+// Best-effort: kalau query gagal atau barisnya belum ada, pakai env apa
+// adanya. Pengiriman tidak boleh mati gara-gara tabel pengaturan.
+func biteshipWithStoreOrigin(db *gorm.DB, base *biteship.Client) *biteship.Client {
+	if db == nil || base == nil {
+		return base
+	}
+	var st entity.EcomSettings
+	if err := db.Where("id = ?", "default").First(&st).Error; err != nil {
+		return base
+	}
+	deref := func(p *string) string {
+		if p == nil {
+			return ""
+		}
+		return strings.TrimSpace(*p)
+	}
+	// Nama pengirim ikut nama toko — yang tertera di resi dan dilihat kurir.
+	return base.WithOriginOverride(
+		deref(st.StorePickupAreaID),
+		"", // ecom_settings belum punya kode pos; area_id sudah cukup untuk Biteship
+		strings.TrimSpace(st.StoreName),
+		deref(st.StorePickupPhone),
+		deref(st.StorePickupAddress),
+		"",
+	)
+}
+
+// Shipping — klien siap pakai untuk service ini.
+func (s *EcomShippingService) Shipping() *biteship.Client {
+	return biteshipWithStoreOrigin(s.DB, s.Biteship)
+}
+
 // SearchAreas — proxy ke Biteship Maps API. Dipakai FE address form untuk
 // autocomplete "Kelurahan". FE debounce ~300ms sebelum call supaya tidak
 // spam Biteship (docs bilang trigger setelah user selesai ngetik).
@@ -55,10 +96,10 @@ func (s *EcomShippingService) SearchAreas(input string) ([]biteship.Area, *dto.A
 	if len(input) < 3 {
 		return []biteship.Area{}, nil
 	}
-	if !s.Biteship.IsConfigured() {
+	if !s.Shipping().IsConfigured() {
 		return []biteship.Area{}, nil
 	}
-	areas, err := s.Biteship.SearchAreas(input)
+	areas, err := s.Shipping().SearchAreas(input)
 	if err != nil {
 		s.Log.Warn().Err(err).Str("input", input).Msg("Biteship SearchAreas failed")
 		// Kembalikan empty saja — cegah address form stuck loading. FE fallback:
@@ -138,7 +179,7 @@ func (s *EcomShippingService) GetRates(userID string, req dto.ShippingRateReques
 	if addr.BiteshipAreaID != nil && *addr.BiteshipAreaID != "" {
 		rateReq.DestinationAreaID = *addr.BiteshipAreaID
 	}
-	rates, err := s.Biteship.GetRates(rateReq)
+	rates, err := s.Shipping().GetRates(rateReq)
 	if err != nil {
 		s.Log.Error().Err(err).Msg("Failed to get shipping rates")
 		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Gagal ambil ongkir"}

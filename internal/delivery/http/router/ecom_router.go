@@ -153,6 +153,8 @@ func UseEcomCustomerRouter(ctx context.Context, r fiber.Router) {
 	// Customer own orders
 	g.Get("/orders", ordersCtrl.List)
 	g.Get("/orders/:id", ordersCtrl.GetDetail)
+	// Bukti transfer manual — customer lampirkan setelah transfer.
+	g.Post("/orders/:id/payment-proof", ordersCtrl.SubmitPaymentProof)
 	// Marketplace-pattern buyer confirmation (28 Jul 2026) — kurir tag
 	// delivered → customer harus konfirmasi manual → completed.
 	g.Post("/orders/:id/confirm-received", ordersCtrl.ConfirmReceived)

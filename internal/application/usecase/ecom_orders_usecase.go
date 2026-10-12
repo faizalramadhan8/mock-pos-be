@@ -187,6 +187,51 @@ func (s *EcomOrdersService) CancelPending(userID, orderID string) (*dto.Customer
 	return s.GetDetail(userID, orderID)
 }
 
+// SubmitPaymentProof — customer melampirkan bukti transfer ke pesanannya.
+// Berkasnya sendiri sudah di-upload lewat POST /upload?type=payment-proof;
+// fungsi ini cuma menautkan URL-nya ke order setelah memastikan pemiliknya.
+//
+// Hanya untuk pesanan yang masih `pending_payment`. Boleh di-upload ulang
+// (mis. salah foto) selama belum dikonfirmasi admin — URL lama ditimpa.
+// Status TIDAK otomatis jadi `paid`: yang memutuskan uang sudah masuk tetap
+// Bu Santi setelah mencocokkan dengan mutasi rekening.
+func (s *EcomOrdersService) SubmitPaymentProof(userID, orderID, proofURL string) (*dto.CustomerOrderDetail, *dto.ApiError) {
+	proofURL = strings.TrimSpace(proofURL)
+	if proofURL == "" {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Bukti transfer belum dipilih"}
+	}
+	// Terima hanya path internal hasil endpoint upload kita. Tanpa ini,
+	// customer bisa menautkan URL mana pun — termasuk gambar dari situs lain
+	// yang isinya bisa berubah setelah admin memeriksanya.
+	if !strings.HasPrefix(proofURL, "/storage/payment-proof/") {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Bukti transfer tidak sah"}
+	}
+
+	var order entity.Order
+	if err := s.DB.Where("id = ? AND ecom_user_id = ? AND order_source = 'ecom' AND deleted_at IS NULL", orderID, userID).
+		First(&order).Error; err != nil {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Pesanan tidak ditemukan"}
+	}
+	current := ""
+	if order.EcomStatus != nil {
+		current = *order.EcomStatus
+	}
+	if current != "pending_payment" {
+		return nil, &dto.ApiError{
+			StatusCode: fiber.ErrBadRequest,
+			Message:    "Pesanan ini sudah tidak menunggu pembayaran",
+		}
+	}
+
+	if err := s.DB.Model(&entity.Order{}).Where("id = ?", orderID).
+		Update("payment_proof", proofURL).Error; err != nil {
+		s.Log.Error().Err(err).Str("order_id", orderID).Msg("gagal simpan bukti transfer")
+		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Gagal menyimpan bukti transfer"}
+	}
+	s.Log.Info().Str("order_id", orderID).Str("user_id", userID).Msg("customer mengirim bukti transfer")
+	return s.GetDetail(userID, orderID)
+}
+
 // RetryPayment — regenerate payment_url di PG DOKU untuk order pending_payment
 // yang link-nya sudah expired (24 jam dari CreateOrder). Reuse trx_id supaya
 // PG side idempotent (kalau sudah paid, PG return status PAID → kita sync).

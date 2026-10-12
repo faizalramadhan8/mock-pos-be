@@ -104,6 +104,11 @@ type CustomerOrderDetail struct {
 	EcomDeliveredAt *string `json:"ecom_delivered_at,omitempty"`
 	CreatedAt    string  `json:"created_at"`
 
+	// Bukti transfer yang di-upload customer (URL di /storage). Kosong =
+	// belum upload. Dipakai customer untuk melihat yang sudah dikirim, dan
+	// admin untuk memeriksa sebelum mengonfirmasi pembayaran.
+	PaymentProof string `json:"payment_proof,omitempty"`
+
 	Items []CustomerOrderItemDetail `json:"items"`
 
 	Shipping struct {
