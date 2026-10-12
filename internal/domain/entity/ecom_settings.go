@@ -22,6 +22,10 @@ type EcomSettings struct {
 	StorePickupAddress *string `gorm:"column:store_pickup_address;type:text;null" json:"store_pickup_address,omitempty"`
 	StorePickupPhone   *string `gorm:"column:store_pickup_phone;type:varchar(20);null" json:"store_pickup_phone,omitempty"`
 	StorePickupAreaID  *string `gorm:"column:store_pickup_area_id;type:varchar(50);null" json:"store_pickup_area_id,omitempty"`
+	// Koordinat titik jemput (migration 000074). WAJIB kalau mau kurir instan
+	// — Gojek/Grab menghitung tarif dari jarak, bukan dari wilayah.
+	StorePickupLatitude  *float64 `gorm:"column:store_pickup_latitude;type:decimal(10,7);null" json:"store_pickup_latitude,omitempty"`
+	StorePickupLongitude *float64 `gorm:"column:store_pickup_longitude;type:decimal(10,7);null" json:"store_pickup_longitude,omitempty"`
 
 	PaymentPgEnabled     bool `gorm:"column:payment_pg_enabled;type:tinyint(1);not null;default:1" json:"payment_pg_enabled"`
 	PaymentManualEnabled bool `gorm:"column:payment_manual_enabled;type:tinyint(1);not null;default:1" json:"payment_manual_enabled"`

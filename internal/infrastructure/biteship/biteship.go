@@ -26,6 +26,11 @@ type Client struct {
 	APIKey       string
 	OriginArea   string
 	OriginPostal string
+	// Koordinat titik jemput. WAJIB untuk kurir instan (Gojek/Grab/Borzo/
+	// Lalamove) yang menghitung tarif dari jarak tempuh, bukan dari area.
+	// Kosong = kurir instan tidak akan muncul sama sekali.
+	OriginLat *float64
+	OriginLng *float64
 	Couriers     string // comma-separated: "jne,jnt,sicepat"
 	FlatBase     int    // fallback stub Rp/kg
 	// Origin (shipper) info untuk Create Order API (bukan cuma rate lookup).
@@ -102,6 +107,16 @@ func (c *Client) WithOriginOverride(areaID, postal, name, phone, address, note s
 	return &cp
 }
 
+// WithOriginCoords — titik jemput presisi untuk kurir instan. Nil = biarkan.
+func (c *Client) WithOriginCoords(lat, lng *float64) *Client {
+	cp := *c
+	if lat != nil && lng != nil && (*lat != 0 || *lng != 0) {
+		cp.OriginLat = lat
+		cp.OriginLng = lng
+	}
+	return &cp
+}
+
 // CanCreateOrder — semua field wajib untuk POST /orders sudah di-set.
 // Rate API cuma butuh area/postal + items; Order API butuh full shipper info +
 // destination contact/address.
@@ -165,23 +180,46 @@ func (c *Client) GetRates(req RateRequest) ([]Rate, error) {
 		"items":    c.itemsForRequest(req),
 	}
 
-	// Origin — prefer area_id, fallback postal_code.
+	// Origin — area_id DAN koordinat dikirim BERSAMAAN kalau dua-duanya ada.
+	//
+	// Dulu ini saling meniadakan (area_id menang, koordinat tidak pernah
+	// terkirim). Akibatnya kurir instan tidak pernah muncul: Gojek/Grab/Borzo/
+	// Lalamove menghitung tarif dari jarak tempuh, jadi tanpa koordinat mereka
+	// tidak bisa memberi harga sama sekali.
+	//
+	// Terbukti 12 Okt 2026 dengan rute Cilangkap → Mekar Jaya (±7 km):
+	//   area_id saja        → 4 kurir  (jne, jnt, sicepat, anteraja)
+	//   koordinat saja      → 10 kurir (+ gojek, grab, borzo, lalamove, …)
+	//   area_id + koordinat → dua-duanya muncul
+	// Jadi mengirim keduanya tidak ada ruginya, dan kehilangan salah satu
+	// berarti kehilangan pilihan kurir untuk customer.
 	if c.OriginArea != "" {
 		body["origin_area_id"] = c.OriginArea
 	} else if c.OriginPostal != "" {
 		body["origin_postal_code"] = c.OriginPostal
 	}
+	if c.OriginLat != nil && c.OriginLng != nil {
+		body["origin_latitude"] = *c.OriginLat
+		body["origin_longitude"] = *c.OriginLng
+	}
 
 	// Destination — prefer area_id, fallback postal_code, fallback coordinates.
-	switch {
-	case req.DestinationAreaID != "":
+	// Sama seperti origin: area_id dan koordinat saling melengkapi, bukan
+	// saling menggantikan.
+	hasDest := false
+	if req.DestinationAreaID != "" {
 		body["destination_area_id"] = req.DestinationAreaID
-	case req.DestinationPostal != "":
+		hasDest = true
+	} else if req.DestinationPostal != "" {
 		body["destination_postal_code"] = req.DestinationPostal
-	case req.DestinationLat != nil && req.DestinationLng != nil:
+		hasDest = true
+	}
+	if req.DestinationLat != nil && req.DestinationLng != nil {
 		body["destination_latitude"] = *req.DestinationLat
 		body["destination_longitude"] = *req.DestinationLng
-	default:
+		hasDest = true
+	}
+	if !hasDest {
 		// Tidak cukup info destination — fallback stub.
 		return c.stubRates(req.TotalWeightGrams), nil
 	}

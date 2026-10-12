@@ -73,7 +73,8 @@ func biteshipWithStoreOrigin(db *gorm.DB, base *biteship.Client) *biteship.Clien
 		return strings.TrimSpace(*p)
 	}
 	// Nama pengirim ikut nama toko — yang tertera di resi dan dilihat kurir.
-	return base.WithOriginOverride(
+	// Koordinat dipasang terpisah: tanpa ini kurir instan tidak muncul.
+	return base.WithOriginCoords(st.StorePickupLatitude, st.StorePickupLongitude).WithOriginOverride(
 		deref(st.StorePickupAreaID),
 		"", // ecom_settings belum punya kode pos; area_id sudah cukup untuk Biteship
 		strings.TrimSpace(st.StoreName),

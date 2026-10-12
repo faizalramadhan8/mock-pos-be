@@ -76,6 +76,8 @@ func (s *EcomAdminSettingsService) Update(patch map[string]interface{}) (*entity
 		"store_pickup_address":        true,
 		"store_pickup_phone":          true,
 		"store_pickup_area_id":        true,
+		"store_pickup_latitude":       true,
+		"store_pickup_longitude":      true,
 		"payment_pg_enabled":          true,
 		"payment_manual_enabled":      true,
 		"notif_order_email_enabled":   true,
