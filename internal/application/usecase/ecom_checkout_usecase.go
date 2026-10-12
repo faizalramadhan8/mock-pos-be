@@ -374,6 +374,13 @@ func (s *EcomCheckoutService) CreateOrder(userID string, userEmail, userPhone, u
 	channelSaved := req.PaymentChannel
 	categorySaved := req.PaymentChannelCategory
 
+	// Kanal wajib HANYA saat PG menyala. Dipindah dari validasi struct ke
+	// sini karena cuma di titik ini saklarnya diketahui.
+	if pgEnabled && req.PaymentChannel == "" {
+		tx.Rollback()
+		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Metode pembayaran belum dipilih"}
+	}
+
 	if !pgEnabled {
 		// Transfer manual: jangan panggil PG sama sekali. Memanggilnya tetap
 		// akan gagal dan jatuh ke manual juga, tapi membuang 20 detik timeout

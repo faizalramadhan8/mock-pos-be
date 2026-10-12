@@ -47,7 +47,11 @@ type CheckoutCreateRequest struct {
 	// PG channel yang customer pilih di checkout page (bca/bri/qris/ovo/dst).
 	// Wajib (validate required) — tanpa channel PG tidak bisa create payment.
 	// Category (virtual-account/qris/e-wallet/credit-card) opsional untuk audit.
-	PaymentChannel         string `json:"payment_channel" validate:"required"`
+	// TIDAK `required`: di mode transfer manual tidak ada kanal untuk dipilih,
+	// jadi mewajibkannya membuat checkout manual selalu ditolak 400. Yang
+	// memeriksa kewajibannya adalah usecase, yang tahu saklar PG menyala atau
+	// tidak — validator struct tidak punya konteks itu.
+	PaymentChannel         string `json:"payment_channel,omitempty"`
 	PaymentChannelCategory string `json:"payment_channel_category,omitempty"`
 	// Selected cart items — kalau kosong = pakai SEMUA cart item (backward compat).
 	// Kalau di-set = hanya item dengan id ini yang di-checkout (partial cart).
