@@ -393,8 +393,26 @@ func (s *EcomAdminOrdersService) UpdateStatus(orderID, newStatus, changedBy stri
 		updates["status"] = "cancelled"
 	}
 
-	// Completed → POS side juga completed (kalau belum). Sudah completed dari
-	// paid transition, jadi safe untuk re-set.
+	// Paid → POS side completed + stempel waktu bayar.
+	//
+	// Komentar lama di bawah menyebut "sudah completed dari paid transition" —
+	// itu benar HANYA untuk pembayaran lewat payment gateway, yang di-set oleh
+	// HandlePGNotification. Untuk transfer manual, admin menandai lunas lewat
+	// jalur ini, dan sampai 13 Okt 2026 tidak ada yang menyentuh `status`
+	// maupun `payment_paid_at`.
+	//
+	// Akibatnya pesanan tetap `status='pending'` selamanya: uang sudah
+	// diterima, barang sudah dikirim, tapi penjualannya TIDAK PERNAH muncul di
+	// Arus Kas, Laba Rugi, maupun Beranda — semua laporan itu menyaring
+	// `status='completed'`. Omzet hilang tanpa ada pesan salah.
+	if newStatus == "paid" {
+		updates["status"] = "completed"
+		if order.PaymentPaidAt == nil {
+			updates["payment_paid_at"] = time.Now()
+		}
+	}
+
+	// Completed → POS side juga completed (kalau belum). Aman di-set ulang.
 	if newStatus == "completed" {
 		updates["status"] = "completed"
 	}
