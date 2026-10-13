@@ -111,10 +111,21 @@ func (s *EcomAdminOrdersService) SendOrderStatusEmail(orderID, newStatus string)
 	}
 	orderURL := strings.TrimRight(appURL, "/") + "/shop/pesanan/" + orderID
 
-	// Copy per status — friendly + actionable. Tidak dobel-dobel (paid sudah
-	// dikirim di checkout_usecase, jangan overlap).
+	// Copy per status — friendly + actionable.
+	//
+	// `paid` dikirim DUA sumber yang tidak pernah bertabrakan: pembayaran
+	// lewat payment gateway dikabari dari checkout_usecase saat webhook masuk,
+	// sedangkan transfer manual dikabari dari sini saat admin menandai lunas.
+	// Satu pesanan hanya melewati salah satunya.
 	var subject, headline, body, cta, ctaLabel string
 	switch newStatus {
+	case "paid":
+		subject = fmt.Sprintf("Pembayaran diterima — Pesanan #%s", shortID)
+		headline = "Pembayaran sudah kami terima"
+		body = fmt.Sprintf("Hai %s, transfer untuk pesanan <b>#%s</b> sudah kami cek dan sesuai.<br><br>Pesananmu segera kami siapkan. Kami kabari lagi begitu paketnya dikirim.", recipientName, shortID)
+		cta = orderURL
+		ctaLabel = "Lihat Pesanan"
+
 	case "shipped":
 		subject = fmt.Sprintf("Pesanan #%s sudah dikirim — TBK Santi", shortID)
 		headline = "Pesananmu sudah dikirim"
@@ -429,7 +440,11 @@ func (s *EcomAdminOrdersService) UpdateStatus(orderID, newStatus, changedBy stri
 
 	// Fire email milestone — shipped/delivered/completed (paid handled di
 	// checkout_usecase saat webhook PG). Async, best-effort.
-	if newStatus == "shipped" || newStatus == "delivered" || newStatus == "completed" {
+	// `paid` ikut dikirim sejak transfer manual dipakai (13 Okt 2026). Tanpa
+	// ini customer yang sudah transfer dan mengunggah bukti tidak menerima
+	// kabar apa pun setelah admin mengonfirmasi — dia akan bertanya lewat
+	// WhatsApp, persis gesekan yang mau dihilangkan oleh unggah bukti di web.
+	if newStatus == "paid" || newStatus == "shipped" || newStatus == "delivered" || newStatus == "completed" {
 		go s.SendOrderStatusEmail(orderID, newStatus)
 	}
 

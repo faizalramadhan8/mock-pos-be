@@ -130,6 +130,13 @@ func (s *Scheduler) Start() {
 // ecomUnpaidTTL — batas sabar menunggu pembayaran online. 24 jam sama dengan
 // masa berlaku link pembayaran DOKU, jadi order yang lewat ini sudah pasti
 // tidak bisa dibayar lagi lewat link yang sama.
+//
+// PENTING: angka ini berasal dari masa berlaku link payment gateway. Untuk
+// transfer manual tidak ada link yang kedaluwarsa — yang ditunggu adalah
+// Bu Santi memeriksa mutasi rekening, dan itu bisa lewat akhir pekan. Karena
+// itu pesanan yang SUDAH mengunggah bukti transfer dikecualikan (lihat query
+// di runEcomExpireUnpaid), bukan diberi TTL lebih panjang: yang menentukan
+// bukan lamanya waktu, melainkan apakah customer sudah membayar.
 const ecomUnpaidTTL = 24 * time.Hour
 
 // runEcomExpireUnpaid — tandai `expired` semua ecom order yang masih
@@ -141,8 +148,18 @@ func (s *Scheduler) runEcomExpireUnpaid() {
 
 	var orders []entity.Order
 	if err := s.DB.Preload("Items").
+		// Bukti transfer sudah ada = customer SUDAH bayar, tinggal menunggu
+		// Bu Santi mencocokkan mutasi. Membatalkannya berarti: uang sudah
+		// masuk ke rekening, stok dikembalikan, pesanan ditandai kedaluwarsa,
+		// dan customer tidak menerima apa pun. Kerugian uang sekaligus
+		// kepercayaan — dan korbannya justru customer yang paling patuh.
+		//
+		// Skenario nyatanya sederhana: transfer Sabtu malam, Bu Santi buka
+		// rekening Senin. Cron jalan tiap jam, jadi pesanannya sudah hangus
+		// jauh sebelum sempat dilihat.
 		Where(`order_source = 'ecom' AND ecom_status = 'pending_payment'
-		       AND created_at <= ? AND deleted_at IS NULL`, cutoff).
+		       AND created_at <= ? AND deleted_at IS NULL
+		       AND (payment_proof IS NULL OR payment_proof = '')`, cutoff).
 		Limit(200).Find(&orders).Error; err != nil {
 		s.Log.Error().Err(err).Msg("Ecom expire-unpaid: query failed")
 		return
@@ -163,6 +180,10 @@ func (s *Scheduler) runEcomExpireUnpaid() {
 			}
 			if fresh.EcomStatus == nil || *fresh.EcomStatus != "pending_payment" {
 				return nil // sudah berubah, jangan sentuh
+			}
+			// Bukti bisa masuk di sela antara query dan transaksi ini.
+			if strings.TrimSpace(fresh.PaymentProof) != "" {
+				return nil
 			}
 
 			for _, it := range o.Items {
