@@ -218,5 +218,16 @@ func (ctrl *EcomCheckoutController) BiteshipWebhook(c *fiber.Ctx) error {
 		// (Kalau balik error, Biteship akan spam webhook queue.)
 		return c.JSON(fiber.Map{"status": "logged"})
 	}
+	// Catat yang BERHASIL juga, bukan cuma yang gagal. Tanpa ini "tidak ada
+	// baris log" ambigu antara "lolos" dan "tidak pernah sampai" — dan itu
+	// persis kebingungan saat menelusuri 401 pertama kali. Volumenya kecil
+	// (beberapa event per pengiriman), jadi tidak membanjiri berkas log.
+	ctrl.Log.Info().
+		Str("biteship_id", payload.OrderID).
+		Str("ref_id", payload.ReferenceID).
+		Str("status", payload.Status).
+		Str("event", payload.Event).
+		Str("waybill", payload.WaybillID).
+		Msg("Biteship webhook diterima")
 	return c.JSON(fiber.Map{"status": "ok"})
 }
