@@ -192,8 +192,11 @@ func (ctrl *EcomCheckoutController) BiteshipWebhook(c *fiber.Ctx) error {
 			Str("expected_header", headerName).
 			Strs("headers_received", arrived).
 			Msg("Biteship webhook token mismatch — rejected")
+		// Pesannya sengaja BEDA dari versi HMAC lama ("Invalid signature").
+		// Response Payload terbaca di dasbor Biteship tanpa perlu akses server,
+		// jadi kalimat ini sekaligus penanda versi mana yang sedang jalan.
 		return c.Status(fiber.StatusUnauthorized).JSON(dto.ApiResponse{
-			Code: fiber.StatusUnauthorized, Message: "Invalid signature",
+			Code: fiber.StatusUnauthorized, Message: "Invalid webhook token",
 		})
 	}
 
