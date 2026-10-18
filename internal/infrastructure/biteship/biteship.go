@@ -3,8 +3,6 @@ package biteship
 import (
 	"bytes"
 	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +11,10 @@ import (
 	"net/url"
 	"time"
 )
+
+// DefaultWebhookHeader — dipakai kalau BITESHIP_WEBHOOK_HEADER tidak diisi.
+// Nilai ini HARUS sama dengan "Headers Signature Key" di dasbor Biteship.
+const DefaultWebhookHeader = "X-Biteship-Signature"
 
 // Biteship shipping rate client — matches Postman collection reference
 // (Rates API By Area Id / By Postal Code / By Mix).
@@ -38,7 +40,12 @@ type Client struct {
 	OriginPhone   string
 	OriginAddress string
 	OriginNote    string
-	// Webhook shared secret (untuk verify signature). Kosong = skip verify.
+	// Webhook auth. Biteship TIDAK menandatangani body — di form "Tambah
+	// Webhook" ada dua isian opsional, "Headers Signature Key" (nama header)
+	// dan "Headers Signature Secret" (nilainya), yang dikirim apa adanya di
+	// tiap permintaan. Jadi yang kita terima token tetap, bukan HMAC.
+	// WebhookSecret kosong = lewati verifikasi (mode dev).
+	WebhookHeader string
 	WebhookSecret string
 	http          *http.Client
 }
@@ -62,13 +69,30 @@ func NewClient(apiKey, originArea, originPostal, couriers string, flatBase int) 
 
 // WithShipper — chainable setter untuk info origin. Dipisah dari NewClient
 // biar backward compat + arg count NewClient tidak meledak.
-func (c *Client) WithShipper(name, phone, address, note, webhookSecret string) *Client {
+func (c *Client) WithShipper(name, phone, address, note string) *Client {
 	c.OriginName = name
 	c.OriginPhone = phone
 	c.OriginAddress = address
 	c.OriginNote = note
-	c.WebhookSecret = webhookSecret
 	return c
+}
+
+// WithWebhookAuth — nama header + nilainya, persis seperti yang diisi di
+// kolom "Headers Signature Key" / "Headers Signature Secret" di dasbor
+// Biteship. Dipisah dari WithShipper karena ini urusan autentikasi masuk,
+// bukan informasi pengirim.
+func (c *Client) WithWebhookAuth(header, secret string) *Client {
+	c.WebhookHeader = header
+	c.WebhookSecret = secret
+	return c
+}
+
+// WebhookHeaderName — nama header yang dibaca dari permintaan masuk.
+func (c *Client) WebhookHeaderName() string {
+	if c.WebhookHeader == "" {
+		return DefaultWebhookHeader
+	}
+	return c.WebhookHeader
 }
 
 // WithOriginOverride — timpa titik asal pengiriman dengan nilai dari
@@ -726,18 +750,26 @@ func (c *Client) GetBalance() (*Balance, error) {
 	return &Balance{Amount: raw.Balance, Currency: raw.Currency}, nil
 }
 
-// VerifyWebhookSignature — HMAC-SHA256 verify header sesuai config webhook di
-// Biteship dashboard. Kalau WebhookSecret kosong = auto-pass (dev mode).
+// VerifyWebhookToken — cocokkan token yang datang di header dengan secret
+// yang dikonfigurasi. Kalau WebhookSecret kosong = auto-pass (mode dev).
 //
-// Biteship header format (per docs): `X-Biteship-Signature: <hmac-sha256-hex>`
-// dengan body raw sebagai message. Beberapa versi Biteship pakai header lain —
-// caller kirim signature header apapun yang di-terima, kita compare.
-func (c *Client) VerifyWebhookSignature(body []byte, signature string) bool {
+// Biteship TIDAK menghitung tanda tangan apa pun atas body. Yang dikirim
+// adalah pasangan header tetap yang kita sendiri tentukan di dasbor mereka
+// ("Headers Signature Key" + "Headers Signature Secret"). Sampai 18 Okt 2026
+// fungsi ini membandingkan HMAC-SHA256 atas body dengan header
+// `X-Biteship-Signature` — yang tidak pernah Biteship kirim, jadi SETIAP
+// event sejak webhook dibuat 28 Jul 2026 dijawab 401 dan tidak satu pun
+// pernah diproses: resi tidak pernah masuk, status tidak pernah maju, dan
+// pengembalian stok untuk paket `returned`/`disposed` tidak pernah jalan.
+//
+// Token tetap memang lebih lemah daripada HMAC — tidak terikat ke isi pesan
+// jadi bisa diputar ulang kalau bocor. Tapi itu yang Biteship sediakan;
+// jalurnya HTTPS, dan usecase tetap memeriksa ulang status pesanan di dalam
+// transaksi sebelum mengubah apa pun.
+func (c *Client) VerifyWebhookToken(token string) bool {
 	if c.WebhookSecret == "" {
 		return true
 	}
-	mac := hmac.New(sha256.New, []byte(c.WebhookSecret))
-	mac.Write(body)
-	expected := hex.EncodeToString(mac.Sum(nil))
-	return hmac.Equal([]byte(expected), []byte(signature))
+	// hmac.Equal = perbandingan waktu-tetap; cegah penebakan lewat selisih waktu.
+	return hmac.Equal([]byte(c.WebhookSecret), []byte(token))
 }

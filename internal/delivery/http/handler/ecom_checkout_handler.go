@@ -160,25 +160,38 @@ func (ctrl *EcomCheckoutController) PGWebhook(c *fiber.Ctx) error {
 // di Biteship dashboard. Bypass verify kalau BITESHIP_WEBHOOK_SECRET kosong
 // (dev mode).
 func (ctrl *EcomCheckoutController) BiteshipWebhook(c *fiber.Ctx) error {
-	// Read raw body untuk signature verify — c.Body() = raw sebelum parse.
+	// Raw body — dipakai untuk membedakan ping instalasi dari event sungguhan.
 	body := c.Body()
 
 	// Installation validation ping — Biteship (dan gateway lain) kirim POST
 	// dengan body kosong / `{}` saat admin klik "Buat Webhook" untuk cek URL
 	// reachable + return 200. HARUS respond OK tanpa verify signature, else
 	// Biteship reject setup dengan error "URL doesn't respond with ok response".
-	// Setelah setup jadi, real event bakal punya body non-empty + signature valid.
+	// Setelah setup jadi, real event bakal punya body non-empty + token valid.
 	trimmed := strings.TrimSpace(string(body))
 	if trimmed == "" || trimmed == "{}" {
 		ctrl.Log.Info().Str("ip", c.IP()).Msg("Biteship webhook installation ping (empty body)")
 		return c.JSON(fiber.Map{"status": "ok"})
 	}
 
-	// Biteship header signature — pakai header standar HMAC.
-	// Docs: https://biteship.com/id/docs/api/webhook
-	sig := c.Get("X-Biteship-Signature")
-	if !ctrl.AdminOrders.Biteship.VerifyWebhookSignature(body, sig) {
-		ctrl.Log.Warn().Str("ip", c.IP()).Msg("Biteship webhook signature mismatch — rejected")
+	// Biteship mengirim pasangan header tetap yang kita tentukan sendiri di
+	// dasbor ("Headers Signature Key" + "Headers Signature Secret"), bukan
+	// tanda tangan atas body. Lihat Client.VerifyWebhookToken.
+	headerName := ctrl.AdminOrders.Biteship.WebhookHeaderName()
+	if !ctrl.AdminOrders.Biteship.VerifyWebhookToken(c.Get(headerName)) {
+		// Catat NAMA header yang benar-benar datang (bukan nilainya — itu
+		// rahasia). Tanpa ini, 401 cuma bisa ditebak-tebak: ketidakcocokan
+		// karena salah nama header dan karena salah nilai terlihat sama
+		// persis dari luar. Ini yang bikin bug 28 Jul tidak ketahuan berbulan.
+		arrived := make([]string, 0, 8)
+		c.Request().Header.VisitAll(func(k, _ []byte) {
+			arrived = append(arrived, string(k))
+		})
+		ctrl.Log.Warn().
+			Str("ip", c.IP()).
+			Str("expected_header", headerName).
+			Strs("headers_received", arrived).
+			Msg("Biteship webhook token mismatch — rejected")
 		return c.Status(fiber.StatusUnauthorized).JSON(dto.ApiResponse{
 			Code: fiber.StatusUnauthorized, Message: "Invalid signature",
 		})

@@ -74,8 +74,15 @@ type Config struct {
 	BiteshipOriginPhone   string `koanf:"BITESHIP_ORIGIN_PHONE"`   // "628123..." E.164
 	BiteshipOriginAddress string `koanf:"BITESHIP_ORIGIN_ADDRESS"` // full alamat toko
 	BiteshipOriginNote    string `koanf:"BITESHIP_ORIGIN_NOTE"`    // "Ruko PG II no 29"
-	// Webhook secret — Biteship kirim header signature; kita verify SHA256 HMAC.
-	// Kosong = skip verify (dev mode). Set random 32-char string untuk prod.
+	// Webhook auth — Biteship tidak menandatangani body. Di form "Tambah
+	// Webhook" ada dua isian opsional yang kita tentukan sendiri, lalu
+	// dikirim apa adanya sebagai header di tiap permintaan:
+	//   BITESHIP_WEBHOOK_HEADER = "Headers Signature Key"    (nama header)
+	//   BITESHIP_WEBHOOK_SECRET = "Headers Signature Secret" (nilainya)
+	// Keduanya HARUS sama persis dengan yang diisi di dasbor. Secret kosong
+	// = lewati verifikasi (mode dev). Header kosong = pakai bawaan
+	// biteship.DefaultWebhookHeader.
+	BiteshipWebhookHeader string `koanf:"BITESHIP_WEBHOOK_HEADER"`
 	BiteshipWebhookSecret string `koanf:"BITESHIP_WEBHOOK_SECRET"`
 
 	// Fallback shipping stub (kalau BITESHIP_API_KEY kosong).

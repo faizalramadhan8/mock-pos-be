@@ -44,6 +44,8 @@ func NewBiteshipClient(cfg *config.Config) *biteship.Client {
 		cfg.BiteshipOriginPhone,
 		cfg.BiteshipOriginAddress,
 		cfg.BiteshipOriginNote,
+	).WithWebhookAuth(
+		cfg.BiteshipWebhookHeader,
 		cfg.BiteshipWebhookSecret,
 	)
 }
