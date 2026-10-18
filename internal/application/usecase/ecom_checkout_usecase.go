@@ -65,11 +65,11 @@ func (s *EcomCheckoutService) CartSubtotal(userID string, selectedIDs []string) 
 		if c.Product == nil {
 			continue
 		}
-		price := c.Product.SellingPrice
-		if c.Product.EcomPrice != nil {
-			price = *c.Product.EcomPrice
-		}
-		sub += price * float64(c.Quantity)
+		// Lewat penghitung yang sama dengan CreateOrder. Kalau dihitung
+		// terpisah, subtotal di keranjang bisa berbeda dari yang ditagih —
+		// dan selisih seperti itu paling merusak kepercayaan saat ketahuan di
+		// layar pembayaran.
+		sub += computeEcomLinePrice(s.DB, c.Product, c.Quantity).LineTotal
 	}
 	return sub, nil
 }
@@ -147,22 +147,31 @@ func (s *EcomCheckoutService) CreateOrder(userID string, userEmail, userPhone, u
 			tx.Rollback()
 			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: fmt.Sprintf("Stok %s tidak cukup (tersisa %d)", p.NameID, p.Stock)}
 		}
-		price := p.SellingPrice
-		if p.EcomPrice != nil {
-			price = *p.EcomPrice
-		}
-		lineTotal := price * float64(ln.Quantity)
+		// Harga grosir mode PAKET — lihat computeEcomLinePrice. Sebelum
+		// 18 Okt 2026 baris ini cuma `ecom_price × qty`, padahal halaman
+		// produk sudah menjanjikan harga grosir di tombol belinya.
+		lp := computeEcomLinePrice(tx, p, ln.Quantity)
+		price := lp.UnitPrice
+		regular := ecomBasePrice(p)
+		lineTotal := lp.LineTotal
 		subtotal += lineTotal
 
 		orderItems = append(orderItems, entity.OrderItem{
-			ID:            uuid.New().String(),
-			OrderID:       orderID,
-			ProductID:     p.ID,
-			Name:          p.NameID,
-			Quantity:      ln.Quantity,
-			UnitType:      "individual",
-			UnitPrice:     price,
+			ID:        uuid.New().String(),
+			OrderID:   orderID,
+			ProductID: p.ID,
+			Name:      p.NameID,
+			Quantity:  ln.Quantity,
+			UnitType:  "individual",
+			UnitPrice: price,
+			// RegularPrice = harga sebelum grosir, supaya "hemat berapa" bisa
+			// dihitung di laporan tanpa menebak-nebak harga saat itu.
+			RegularPrice:  &regular,
 			PurchasePrice: p.PurchasePrice,
+			PriceSource:   lp.PriceSource,
+			TierID:        lp.TierID,
+			PaketCount:    lp.PaketCount,
+			ExtraCount:    lp.ExtraCount,
 		})
 
 		// Reserve stock. Sejak stok toko dan online digabung (migration 000073)

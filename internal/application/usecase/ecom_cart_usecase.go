@@ -129,16 +129,18 @@ func (s *EcomCartService) buildResponse(items []entity.EcomCartItem) *dto.CartRe
 			continue // FK cascade broke or race — skip silently
 		}
 		p := it.Product
-		price := p.SellingPrice
-		if p.EcomPrice != nil {
-			price = *p.EcomPrice
-		}
+		// Keranjang HARUS memakai penghitung yang sama dengan checkout,
+		// termasuk harga grosir mode paket. Kalau dihitung sendiri di sini,
+		// angka di keranjang berbeda dari yang ditagih — dan customer baru
+		// sadar di layar pembayaran.
+		lp := computeEcomLinePrice(s.DB, p, it.Quantity)
+		price := lp.UnitPrice
 		// Ecom image override (Sprint 5 gallery main image), fallback ke POS image.
 		image := p.Image
 		if p.EcomImage != nil && *p.EcomImage != "" {
 			image = *p.EcomImage
 		}
-		subtotal := price * float64(it.Quantity)
+		subtotal := lp.LineTotal
 
 		unavailable := false
 		unavailableReason := ""

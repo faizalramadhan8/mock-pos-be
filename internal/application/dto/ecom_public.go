@@ -57,3 +57,23 @@ type EcomProductListResponse struct {
 	NextCursor string                `json:"next_cursor"`
 	Total      int64                 `json:"total,omitempty"`
 }
+
+// OrderTrackingResponse — riwayat perjalanan paket untuk halaman Lacak Paket.
+// `history` urut dari peristiwa TERLAMA, sama seperti yang Biteship kirim;
+// FE yang membaliknya untuk ditampilkan terbaru-di-atas.
+type OrderTrackingResponse struct {
+	WaybillID string               `json:"waybill_id"`
+	Courier   string               `json:"courier"`
+	Status    string               `json:"status"`
+	Link      string               `json:"link"`
+	History   []OrderTrackingEvent `json:"history"`
+}
+
+type OrderTrackingEvent struct {
+	Status string `json:"status"`
+	// Label — kalimat berbahasa Indonesia. Catatan asli Biteship berbahasa
+	// Inggris, jadi Note dibawa terpisah sebagai cadangan dan untuk penelusuran.
+	Label     string `json:"label"`
+	Note      string `json:"note"`
+	UpdatedAt string `json:"updated_at"`
+}

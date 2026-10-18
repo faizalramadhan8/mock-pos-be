@@ -155,6 +155,9 @@ func UseEcomCustomerRouter(ctx context.Context, r fiber.Router) {
 	g.Get("/orders/:id", ordersCtrl.GetDetail)
 	// Bukti transfer manual — customer lampirkan setelah transfer.
 	g.Post("/orders/:id/payment-proof", ordersCtrl.SubmitPaymentProof)
+	// Lacak paket di dalam aplikasi (18 Okt 2026) — riwayat perjalanan dari
+	// Biteship. Sebelumnya customer dilempar keluar ke track.biteship.com.
+	g.Get("/orders/:id/tracking", ordersCtrl.GetTracking)
 	// Marketplace-pattern buyer confirmation (28 Jul 2026) — kurir tag
 	// delivered → customer harus konfirmasi manual → completed.
 	g.Post("/orders/:id/confirm-received", ordersCtrl.ConfirmReceived)
