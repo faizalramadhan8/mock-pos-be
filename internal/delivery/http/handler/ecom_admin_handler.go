@@ -748,18 +748,34 @@ func (ctrl *EcomAdminController) ListCatalogRefs(c *fiber.Ctx) error {
 		Suppliers  []ref `json:"suppliers"`
 	}{Categories: []ref{}, Suppliers: []ref{}}
 
+	// Galat TIDAK ditelan. Versi pertama memakai `if err == nil` lalu
+	// mengembalikan daftar kosong dengan status 200 — layar menampilkan
+	// dropdown kosong tanpa petunjuk apa pun, dan penyebabnya tidak bisa
+	// dilacak dari mana-mana. Kategori kosong berarti produk tidak bisa
+	// dibuat sama sekali, jadi ini kegagalan yang harus kedengaran.
 	var cats []entity.Category
-	if err := ctrl.DB.Where("deleted_at IS NULL").Order("name ASC").Find(&cats).Error; err == nil {
-		for _, c := range cats {
-			out.Categories = append(out.Categories, ref{ID: c.ID, Name: c.Name})
-		}
+	if err := ctrl.DB.Order("name ASC").Find(&cats).Error; err != nil {
+		ctrl.Log.Error().Err(err).Msg("gagal ambil kategori untuk form produk rumah")
+		return c.Status(fiber.StatusInternalServerError).JSON(dto.ApiResponse{
+			Code: fiber.StatusInternalServerError, Message: "Gagal mengambil daftar kategori", Error: err.Error(),
+		})
 	}
+	for _, c := range cats {
+		out.Categories = append(out.Categories, ref{ID: c.ID, Name: c.Name})
+	}
+
 	var sups []entity.Supplier
-	if err := ctrl.DB.Where("deleted_at IS NULL").Order("name ASC").Find(&sups).Error; err == nil {
-		for _, sp := range sups {
-			out.Suppliers = append(out.Suppliers, ref{ID: sp.ID, Name: sp.Name})
-		}
+	if err := ctrl.DB.Order("name ASC").Find(&sups).Error; err != nil {
+		// Pemasok opsional — kegagalannya tidak boleh menghalangi pembuatan
+		// produk, cukup dicatat. Beda dari kategori yang wajib diisi.
+		ctrl.Log.Warn().Err(err).Msg("gagal ambil pemasok untuk form produk rumah")
 	}
+	for _, sp := range sups {
+		out.Suppliers = append(out.Suppliers, ref{ID: sp.ID, Name: sp.Name})
+	}
+
+	ctrl.Log.Info().Int("kategori", len(out.Categories)).Int("pemasok", len(out.Suppliers)).
+		Msg("catalog-refs untuk form produk rumah")
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "successfully", Body: out})
 }
 
