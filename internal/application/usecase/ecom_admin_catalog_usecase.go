@@ -2,10 +2,12 @@ package usecase
 
 import (
 	"context"
+	"errors"
 
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
 	"github.com/faizalramadhan/pos-be/internal/domain/entity"
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -59,6 +61,36 @@ func (s *EcomAdminCatalogService) pastikanMilikRumah(id string) *dto.ApiError {
 	return nil
 }
 
+// KategoriRumahID — kategori POS penampung untuk produk toko rumah.
+//
+// `products.category_id` NOT NULL dengan FK ke `categories`, jadi tiap
+// produk wajib punya kategori POS. Tapi untuk produk rumah kategori POS itu
+// tidak bermakna: produknya tidak pernah muncul di POS, dan daftar kategori
+// POS di toko Bu Santi justru berisi nama-nama pemasok (Adyaceda, Howki,
+// Indogrosir) — menyuruhnya memilih dari situ hanya menghasilkan data asal.
+//
+// Jadi backend mengisinya sendiri dengan satu kategori penampung, dan
+// formnya menanyakan kategori ETALASE (`ecom_category_id`) — yang memang
+// menentukan produk muncul di kelompok mana di storefront.
+//
+// Dibuat sekali saat produk rumah pertama dibuat, lalu dipakai ulang.
+func (s *EcomAdminCatalogService) KategoriRumahID() (string, *dto.ApiError) {
+	const nama = "Toko Rumah"
+	var c entity.Category
+	err := s.DB.Where("name = ?", nama).First(&c).Error
+	if err == nil {
+		return c.ID, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Gagal menyiapkan kategori produk rumah"}
+	}
+	c = entity.Category{ID: uuid.New().String(), Name: nama, NameID: nama}
+	if err := s.DB.Create(&c).Error; err != nil {
+		return "", &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Gagal membuat kategori produk rumah"}
+	}
+	return c.ID, nil
+}
+
 // Create — produk baru milik toko rumah.
 func (s *EcomAdminCatalogService) Create(req dto.CreateProductRequest, userID string) (*dto.ProductResponse, *dto.ApiError) {
 	// Dipaksa, bukan dibaca dari request. Panel rumah tidak boleh bisa
@@ -93,7 +125,6 @@ func (s *EcomAdminCatalogService) AdjustStock(id string, req dto.StockAdjustment
 	}
 	return s.Inventory.AdjustStock(id, req, userID)
 }
-
 
 // ─── Harga grosir (tier) produk rumah ─────────────────────────────────────
 //

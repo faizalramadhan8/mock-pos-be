@@ -148,6 +148,7 @@ func (s *ProductService) Create(req dto.CreateProductRequest, userID string) (*d
 		MinStock:      req.MinStock,
 		IsActive:      true,
 		Location:      loc,
+		EcomCategoryID: req.EcomCategoryID,
 	}
 
 	if product.QtyPerBox == 0 {

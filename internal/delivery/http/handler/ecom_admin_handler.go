@@ -641,6 +641,18 @@ func (ctrl *EcomAdminController) CreateProduct(c *fiber.Ctx) error {
 			Code: fiber.ErrUnprocessableEntity.Code, Message: "Invalid body", Error: err.Error(),
 		})
 	}
+	// Kategori POS diisi backend, bukan ditanyakan ke admin — lihat
+	// KategoriRumahID. Harus SEBELUM validasi, karena `category_id` wajib
+	// di DTO yang dipakai bersama POS.
+	if req.CategoryID == "" {
+		id, fail := ctrl.EcomCatalogSvc.KategoriRumahID()
+		if fail != nil {
+			return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
+				Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message,
+			})
+		}
+		req.CategoryID = id
+	}
 	if err := util.ValidateRequest(req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{
 			Code: fiber.ErrBadRequest.Code, Message: "Validation failed", Error: err,
