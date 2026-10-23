@@ -15,7 +15,8 @@ import (
 
 // EcomPublicController — public endpoints untuk storefront. NO AUTH needed
 // (customer browse produk sebelum login). Response filter enforce hanya
-// produk yang tayang di ecom (ecom_is_available + stock > 0).
+// produk yang tayang di storefront (ecom_is_available + stock > 0).
+// `stock` = rak rumah; rak Bekasi (`stock`) tidak dijual online.
 type EcomPublicController struct {
 	Log         *zerolog.Logger
 	DB          *gorm.DB
@@ -55,9 +56,13 @@ func (ctrl *EcomPublicController) PublicSettings(c *fiber.Ctx) error {
 	// Rekening transfer manual — diambil dari tabel POS `bank_accounts`
 	// supaya Bu Santi mengelolanya di satu tempat saja (Pengaturan POS),
 	// bukan mengetik ulang di panel ecom dan berisiko beda nomor.
+	// HANYA rekening bertanda 'home'. Storefront ini melayani toko rumah,
+	// yang punya rekening sendiri — menampilkan rekening Bekasi di sini
+	// membuat sebagian customer transfer ke tempat yang salah, dan
+	// pembukuan yang sengaja dipisah tercampur lagi di langkah pertama.
 	bankAccounts := []fiber.Map{}
 	var accounts []entity.BankAccount
-	if err := ctrl.DB.Order("created_at ASC").Find(&accounts).Error; err == nil {
+	if err := ctrl.DB.Where("location = ?", "home").Order("created_at ASC").Find(&accounts).Error; err == nil {
 		for _, a := range accounts {
 			bankAccounts = append(bankAccounts, fiber.Map{
 				"bank_name":      a.BankName,
@@ -76,6 +81,9 @@ func (ctrl *EcomPublicController) PublicSettings(c *fiber.Ctx) error {
 		"announcement_bar_cta_label":    s.AnnouncementBarCtaLabel,
 		"announcement_bar_cta_url":      s.AnnouncementBarCtaURL,
 		"store_name":                    s.StoreName,
+		// Logo ikut di subset publik — dipakai header storefront. Aman
+		// ditampilkan ke siapa pun; isinya memang untuk dilihat customer.
+		"store_logo":                    s.StoreLogo,
 		"payment_pg_enabled":            s.PaymentPgEnabled,
 		"payment_manual_enabled":        s.PaymentManualEnabled,
 		// Rekening tujuan transfer manual. Tanpa ini customer tidak punya

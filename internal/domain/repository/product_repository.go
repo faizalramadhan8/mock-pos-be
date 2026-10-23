@@ -18,7 +18,10 @@ func (r *ProductRepository) FindAll(search, categoryID, supplierID string, limit
 	var products []entity.Product
 	var total int64
 
-	query := r.DB.Model(&entity.Product{})
+	// Katalog POS = produk Bekasi saja. Produk toko rumah dikelola dari
+	// panel rumah dan TIDAK boleh terlihat di sini — kasir tidak boleh bisa
+	// menjual barang yang fisiknya ada di rumah.
+	query := r.DB.Model(&entity.Product{}).Where("location = ?", "store")
 	if search != "" {
 		query = query.Where("name LIKE ? OR name_id LIKE ? OR sku LIKE ?", "%"+search+"%", "%"+search+"%", "%"+search+"%")
 	}
@@ -44,6 +47,9 @@ func (r *ProductRepository) FindByID(id string) (*entity.Product, error) {
 	return &product, nil
 }
 
+// FindBySKU — SENGAJA tidak menyaring tempat: SKU unik lintas katalog, dan
+// pemeriksaan duplikat harus melihat semuanya. Yang menyaring tempat adalah
+// pemanggilnya (mis. scan barcode kasir lewat daftar produk POS).
 func (r *ProductRepository) FindBySKU(sku string) (*entity.Product, error) {
 	var product entity.Product
 	if err := r.DB.Preload("Category").Preload("Supplier").Where("sku = ?", sku).First(&product).Error; err != nil {
@@ -54,7 +60,10 @@ func (r *ProductRepository) FindBySKU(sku string) (*entity.Product, error) {
 
 func (r *ProductRepository) FindLowStock() ([]entity.Product, error) {
 	var products []entity.Product
-	if err := r.DB.Preload("Category").Preload("Supplier").Where("stock <= min_stock AND is_active = 1").Find(&products).Error; err != nil {
+	// Peringatan stok menipis di Beranda POS — rak Bekasi saja. Produk rumah
+	// ikut di sini akan memunculkan alarm untuk tumpukan yang salah.
+	if err := r.DB.Preload("Category").Preload("Supplier").
+		Where("stock <= min_stock AND is_active = 1 AND location = ?", "store").Find(&products).Error; err != nil {
 		return nil, err
 	}
 	return products, nil
@@ -82,13 +91,18 @@ func (r *ProductRepository) Update(product *entity.Product) error {
 	//   1. Order Create/MarkAsPaid → `gorm.Expr("stock - ?", delta)`
 	//   2. Order Cancel/Refund → `gorm.Expr("stock + ?", delta)`
 	//   3. AdjustStock endpoint (Sesuaikan Stok, audit trail wajib)
-	//   4. Ecom checkout/cancel/refund — sejak migration 000073 stok toko dan
-	//      online satu kolom, jadi storefront juga memotong `stock` di sini.
+	//   4. Storefront checkout/cancel/refund — memotong `stock`, BUKAN
+	//      `stock`. Sejak migration 000075 toko rumah punya rak sendiri.
 	// Kalau admin buka Edit Produk saat kasir lagi jual, form FE punya nilai
 	// stock lama. Save() overwrite stok yang sudah decrement → stok bocor,
 	// movement record tetap ada (double-truth). Skip kolom stock cegah bug.
 	// `stock_ecom` tetap di-Omit walau sekarang konstan 0 — cegah Save()
 	// menulis balik nilai lama kalau ada entity yang masih membawanya.
+	// `stock` ikut di-Omit dengan alasan yang sama persis seperti
+	// `stock`: kalau Bu Santi membuka Edit Produk sementara ada customer
+	// online checkout, Save() akan menulis balik stok rumah yang sudah
+	// dipotong. Insidennya akan terlihat identik dengan Sunbay 26 Jul 2026,
+	// cuma di rak yang berbeda.
 	return r.DB.Omit("stock", "stock_ecom", "created_at").Save(product).Error
 }
 
@@ -99,7 +113,7 @@ func (r *ProductRepository) AdjustStock(id string, delta int) error {
 
 func (r *ProductRepository) CountActive() (int64, error) {
 	var count int64
-	err := r.DB.Model(&entity.Product{}).Where("is_active = 1").Count(&count).Error
+	err := r.DB.Model(&entity.Product{}).Where("is_active = 1 AND location = ?", "store").Count(&count).Error
 	return count, err
 }
 

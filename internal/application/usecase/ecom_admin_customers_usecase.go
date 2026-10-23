@@ -80,7 +80,7 @@ func (s *EcomAdminCustomersService) List(search string, page, limit int) (*dto.E
 			       SUM(CASE WHEN o.status = 'completed' THEN o.total ELSE 0 END) AS total_spent,
 			       DATE_FORMAT(MAX(o.created_at), '%Y-%m-%dT%H:%i:%sZ') AS last_order_date
 			FROM orders o
-			WHERE o.order_source = 'ecom' AND o.deleted_at IS NULL AND o.ecom_user_id IS NOT NULL
+			WHERE o.order_source IN ('ecom','home') AND o.deleted_at IS NULL AND o.ecom_user_id IS NOT NULL
 			GROUP BY o.ecom_user_id
 		) agg ON agg.ecom_user_id = u.id`).
 		Order("u.created_at DESC").
@@ -142,7 +142,7 @@ func (s *EcomAdminCustomersService) GetDetail(customerID string) (*dto.EcomAdmin
 		CancelledCount int
 	}{}
 	s.DB.Table("orders o").
-		Where("o.order_source = 'ecom' AND o.ecom_user_id = ? AND o.deleted_at IS NULL", customerID).
+		Where("o.order_source IN ('ecom','home') AND o.ecom_user_id = ? AND o.deleted_at IS NULL", customerID).
 		Select(`COUNT(*) AS order_count,
 			SUM(CASE WHEN o.status = 'completed' THEN o.total ELSE 0 END) AS total_spent,
 			DATE_FORMAT(MAX(o.created_at), '%Y-%m-%dT%H:%i:%sZ') AS last_order_date,
@@ -161,7 +161,7 @@ func (s *EcomAdminCustomersService) GetDetail(customerID string) (*dto.EcomAdmin
 		ItemCount int
 	}{}
 	s.DB.Table("orders o").
-		Where("o.order_source = 'ecom' AND o.ecom_user_id = ? AND o.deleted_at IS NULL", customerID).
+		Where("o.order_source IN ('ecom','home') AND o.ecom_user_id = ? AND o.deleted_at IS NULL", customerID).
 		Select(`o.id, DATE_FORMAT(o.created_at, '%Y-%m-%dT%H:%i:%sZ') AS created_at,
 			COALESCE(o.ecom_status, o.status) AS status, o.total,
 			(SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id) AS item_count`).

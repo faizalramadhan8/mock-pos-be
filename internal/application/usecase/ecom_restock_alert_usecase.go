@@ -6,13 +6,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
 	"github.com/faizalramadhan/pos-be/internal/domain/entity"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
 	"github.com/faizalramadhan/pos-be/internal/infrastructure/config"
 	"github.com/faizalramadhan/pos-be/internal/infrastructure/email"
+	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
 )
@@ -44,7 +44,11 @@ func (s *EcomRestockAlertService) Subscribe(userID, productID string) *dto.ApiEr
 	// Cek produk exists (soft check — kalau tidak ada di ecom, tetap allow
 	// subscribe supaya customer bisa jaga niat beli).
 	var count int64
-	s.DB.Model(&entity.Product{}).Where("id = ? AND deleted_at IS NULL", productID).Count(&count)
+	// Hanya produk toko rumah. Tanpa penyaring ini customer bisa mendaftar
+	// notifikasi untuk produk Bekasi — yang tidak pernah dijual online, jadi
+	// notifikasinya tidak akan pernah datang, dan keberadaan produknya
+	// terkonfirmasi ke pihak yang seharusnya tidak melihat katalog itu.
+	s.DB.Model(&entity.Product{}).Where("id = ? AND location = 'home' AND deleted_at IS NULL", productID).Count(&count)
 	if count == 0 {
 		return &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Produk tidak ditemukan"}
 	}
@@ -99,7 +103,7 @@ func (s *EcomRestockAlertService) TriggerRestockNotif(productID string) {
 	}
 	// Fetch produk untuk info.
 	var product entity.Product
-	if err := s.DB.Where("id = ?", productID).First(&product).Error; err != nil {
+	if err := s.DB.Where("id = ? AND location = 'home'", productID).First(&product).Error; err != nil {
 		return
 	}
 	// Skip kalau stok masih 0 (mungkin dispatch dipanggil salah).

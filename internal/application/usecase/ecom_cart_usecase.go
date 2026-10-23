@@ -37,7 +37,7 @@ func (s *EcomCartService) GetCart(userID string) (*dto.CartResponse, *dto.ApiErr
 // Validate: produk exists + ecom_is_available + stok cukup + minOrder.
 func (s *EcomCartService) AddItem(userID string, req dto.CartAddRequest) (*dto.CartResponse, *dto.ApiError) {
 	var product entity.Product
-	if err := s.DB.Where("id = ? AND deleted_at IS NULL", req.ProductID).First(&product).Error; err != nil {
+	if err := s.DB.Where("id = ? AND location = 'home' AND deleted_at IS NULL", req.ProductID).First(&product).Error; err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Produk tidak ditemukan"}
 	}
 	if !product.EcomIsAvailable {

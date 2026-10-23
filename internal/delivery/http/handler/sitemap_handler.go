@@ -51,7 +51,7 @@ func (ctrl *SitemapController) Sitemap(c *fiber.Ctx) error {
 	// Produk yang tayang di storefront (aktif + stock > 0 + ecom_is_available).
 	var products []entity.Product
 	ctrl.DB.Select("id, updated_at").
-		Where("deleted_at IS NULL AND is_active = 1 AND ecom_is_available = 1 AND stock > 0").
+		Where("location = 'home' AND deleted_at IS NULL AND is_active = 1 AND ecom_is_available = 1 AND stock > 0").
 		Find(&products)
 	for _, p := range products {
 		addURL(&b, base+"/shop/produk/"+p.ID, "weekly", "0.6", p.UpdatedAt)

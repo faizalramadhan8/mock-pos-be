@@ -35,7 +35,7 @@ func NewInventoryService(ctx context.Context, db *gorm.DB) *InventoryService {
 	}
 }
 
-func (s *InventoryService) GetAllMovements(movementType string, page, limit int) ([]dto.StockMovementResponse, int64, *dto.ApiError) {
+func (s *InventoryService) GetAllMovements(movementType, location string, page, limit int) ([]dto.StockMovementResponse, int64, *dto.ApiError) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -44,7 +44,7 @@ func (s *InventoryService) GetAllMovements(movementType string, page, limit int)
 	}
 	offset := (page - 1) * limit
 
-	movements, total, err := s.MoveRepo.FindAll(movementType, limit, offset)
+	movements, total, err := s.MoveRepo.FindAll(movementType, location, limit, offset)
 	if err != nil {
 		s.Log.Error().Err(err).Msg("Failed to fetch stock movements")
 		return nil, 0, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to fetch movements"}
@@ -270,6 +270,13 @@ func (s *InventoryService) AdjustStock(productID string, req dto.StockAdjustment
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Product not found"}
 	}
 
+	// Tempatnya ditentukan PRODUKNYA, bukan dikirim pemanggil. Tiap produk
+	// milik satu tempat, jadi tidak ada pilihan yang bisa salah — dan tidak
+	// ada cara menyesuaikan stok Bekasi dari panel rumah atau sebaliknya.
+	loc := product.Location
+	if loc == "" {
+		loc = "store"
+	}
 	currentStock := product.Stock
 	diff := req.NewStock - currentStock
 	if diff == 0 {
@@ -278,7 +285,7 @@ func (s *InventoryService) AdjustStock(productID string, req dto.StockAdjustment
 
 	tx := s.DB.Begin()
 
-	// Update products.stock ke nilai baru (absolute set)
+	// Set absolut ke nilai baru, pada kolom milik tempat yang dipilih.
 	if err := tx.Model(&entity.Product{}).Where("id = ?", productID).
 		Update("stock", req.NewStock).Error; err != nil {
 		tx.Rollback()
@@ -291,6 +298,7 @@ func (s *InventoryService) AdjustStock(productID string, req dto.StockAdjustment
 		ProductID: productID,
 		Quantity:  abs(diff),
 		UnitType:  "individual",
+		Location:  loc, // dari product.Location
 		Reason:    req.Reason,
 		Note:      req.Note,
 		CreatedBy: userID,

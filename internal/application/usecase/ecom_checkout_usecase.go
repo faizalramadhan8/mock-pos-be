@@ -102,7 +102,7 @@ func (s *EcomCheckoutService) CreateOrder(userID string, userEmail, userPhone, u
 		// Buy-now — load produk berdasar ID di request. Cart TIDAK disentuh.
 		for _, bn := range req.BuyNowItems {
 			var p entity.Product
-			if err := tx.Where("id = ? AND deleted_at IS NULL", bn.ProductID).First(&p).Error; err != nil {
+			if err := tx.Where("id = ? AND location = 'home' AND deleted_at IS NULL", bn.ProductID).First(&p).Error; err != nil {
 				tx.Rollback()
 				return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Produk tidak ditemukan"}
 			}
@@ -174,12 +174,15 @@ func (s *EcomCheckoutService) CreateOrder(userID string, userEmail, userPhone, u
 			ExtraCount:    lp.ExtraCount,
 		})
 
-		// Reserve stock. Sejak stok toko dan online digabung (migration 000073)
-		// kasir POS bisa menjual barang yang sama persis saat customer online
-		// checkout, jadi pengecekan `ln.Quantity > p.Stock` di atas saja tidak
-		// cukup — angka itu sudah basi begitu dibaca. Guard `stock >= ?` di
-		// WHERE membuat decrement gagal (RowsAffected 0) alih-alih membuat stok
-		// minus, dan seluruh checkout di-rollback.
+		// Potong stok rumah. Sejak migration 000075 rak rumah terpisah dari
+		// rak Bekasi, jadi kasir TIDAK bisa lagi menghabiskan stok yang sedang
+		// di-checkout customer online.
+		//
+		// Guardnya tetap wajib: dua customer online bisa checkout barang yang
+		// sama bersamaan, dan `ln.Quantity > p.Stock` di atas sudah basi
+		// begitu dibaca. `stock >= ?` di WHERE membuat decrement gagal
+		// (RowsAffected 0) alih-alih membuat stok minus, dan seluruh checkout
+		// di-rollback.
 		res := tx.Model(&entity.Product{}).Where("id = ? AND stock >= ?", p.ID, ln.Quantity).
 			Update("stock", gorm.Expr("stock - ?", ln.Quantity))
 		if res.Error != nil {
@@ -199,6 +202,7 @@ func (s *EcomCheckoutService) CreateOrder(userID string, userEmail, userPhone, u
 			Type:      "out",
 			Quantity:  ln.Quantity,
 			UnitType:  "individual",
+			Location:  "home",
 			UnitPrice: price,
 			Reason:    "sale",
 			Note:      fmt.Sprintf("Penjualan online (Order #%s)", orderID[:8]),
@@ -295,7 +299,10 @@ func (s *EcomCheckoutService) CreateOrder(userID string, userEmail, userPhone, u
 		Customer:                userName,
 		CustomerPhone:           userPhone,
 		CreatedBy:               userID,
-		OrderSource:             "ecom",
+		// Storefront saat ini melayani toko RUMAH. 'ecom' disiapkan untuk
+		// storefront Bekasi yang menyusul habis Lebaran — nilainya dibedakan
+		// supaya laporan bisa memisahkan dua tempat itu sejak hari pertama.
+		OrderSource:             "home",
 		EcomUserID:              ecomUserIDPtr,
 		ShippingAddressSnapshot: &addrSnapshot,
 		ShippingCourier:         shippingCourierPtr,
@@ -555,6 +562,7 @@ func (s *EcomCheckoutService) HandlePGNotification(notif pg.WebhookPayload) *dto
 				Type:      "in",
 				Quantity:  it.Quantity,
 				UnitType:  "individual",
+				Location:  "home",
 				UnitPrice: it.UnitPrice,
 				Reason:    "cancel",
 				Note:      fmt.Sprintf("Pembayaran online gagal/kedaluwarsa (Order #%s)", orderID[:8]),

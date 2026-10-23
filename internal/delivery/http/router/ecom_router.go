@@ -29,6 +29,25 @@ func UseEcomAdminRouter(ctx context.Context, r fiber.Router) {
 	gated.Get("/products", ctrl.ListProducts)
 	gated.Get("/products/:id", ctrl.GetProduct)
 	gated.Patch("/products/:id/ecom-fields", ctrl.UpdateEcomFields)
+	// Katalog produk toko rumah (21 Okt 2026) — CRUD penuh. Sebelumnya
+	// produk hanya bisa lahir di POS, jadi panel rumah tidak punya cara
+	// membuat katalognya sendiri. Semua penjaga kepemilikan ada di usecase:
+	// endpoint ini menolak id produk Bekasi dengan "tidak ditemukan".
+	gated.Post("/products", ctrl.CreateProduct)
+	gated.Put("/products/:id", ctrl.UpdateProduct)
+	gated.Delete("/products/:id", ctrl.DeleteProduct)
+	// Stok rumah — wajib alasan + menulis jejak, sama seperti Sesuaikan
+	// Stok di POS. Dipisah dari Update supaya tidak ada form yang bisa
+	// menimpa stok diam-diam (insiden Sunbay 26 Jul 2026).
+	gated.Post("/products/:id/adjust-stock", ctrl.AdjustProductStock)
+	gated.Get("/stock-movements", ctrl.ListStockMovements)
+	gated.Get("/catalog-refs", ctrl.ListCatalogRefs)
+	// Harga grosir (kartonan) produk rumah — inti model bisnis toko rumah.
+	// Penjaga kepemilikan di usecase menolak produk/tier milik Bekasi.
+	gated.Get("/products/:id/tiers", ctrl.ListProductTiers)
+	gated.Post("/products/:id/tiers", ctrl.CreateProductTier)
+	gated.Put("/products/:id/tiers/:tierId", ctrl.UpdateProductTier)
+	gated.Delete("/products/:id/tiers/:tierId", ctrl.DeleteProductTier)
 	// Ecom categories CRUD (terpisah dari POS categories).
 	gated.Get("/categories", ctrl.ListCategories)
 	gated.Post("/categories", ctrl.CreateCategory)

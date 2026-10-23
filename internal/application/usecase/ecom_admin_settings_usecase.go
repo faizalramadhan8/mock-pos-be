@@ -72,6 +72,7 @@ func (s *EcomAdminSettingsService) Update(patch map[string]interface{}) (*entity
 		"announcement_bar_cta_label":  true,
 		"announcement_bar_cta_url":    true,
 		"store_name":                  true,
+		"store_logo":                  true,
 		"store_email":                 true,
 		"store_pickup_address":        true,
 		"store_pickup_phone":          true,

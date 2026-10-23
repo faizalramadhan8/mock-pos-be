@@ -32,7 +32,7 @@ func (ctrl *InventoryController) GetAllMovements(c *fiber.Ctx) error {
 	page, _ := strconv.Atoi(c.Query("page", "1"))
 	limit, _ := strconv.Atoi(c.Query("limit", "20"))
 
-	movements, total, fail := ctrl.Service.GetAllMovements(movementType, page, limit)
+	movements, total, fail := ctrl.Service.GetAllMovements(movementType, c.Query("location", "store"), page, limit)
 	if fail != nil {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
 	}

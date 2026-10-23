@@ -18,6 +18,10 @@ type EcomSettings struct {
 	AnnouncementBarCtaURL   *string `gorm:"column:announcement_bar_cta_url;type:varchar(200);null" json:"announcement_bar_cta_url,omitempty"`
 
 	StoreName          string  `gorm:"column:store_name;type:varchar(200);not null;default:'Toko Bahan Kue Santi'" json:"store_name"`
+	// StoreLogo — URL gambar logo storefront (hasil upload). Kosong = pakai
+	// logo bawaan yang digambar di kode. Dibuat jadi isian karena Bu Santi
+	// minta logonya bisa diganti-ganti sendiri tanpa deploy.
+	StoreLogo          *string `gorm:"column:store_logo;type:varchar(500);null" json:"store_logo,omitempty"`
 	StoreEmail         *string `gorm:"column:store_email;type:varchar(200);null" json:"store_email,omitempty"`
 	StorePickupAddress *string `gorm:"column:store_pickup_address;type:text;null" json:"store_pickup_address,omitempty"`
 	StorePickupPhone   *string `gorm:"column:store_pickup_phone;type:varchar(20);null" json:"store_pickup_phone,omitempty"`

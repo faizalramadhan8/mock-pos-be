@@ -272,7 +272,7 @@ func (s *EcomAdminOrdersService) List(status, search, cursor string, limit int) 
 	}
 	s.DB.Model(&entity.Order{}).
 		Select("ecom_status, COUNT(*) as cnt").
-		Where("order_source = 'ecom' AND deleted_at IS NULL").
+		Where("order_source IN ('ecom','home') AND deleted_at IS NULL").
 		Group("ecom_status").Scan(&counts)
 	countMap := map[string]int{}
 	for _, c := range counts {
@@ -293,7 +293,7 @@ func (s *EcomAdminOrdersService) GetDetail(orderID string) (*dto.CustomerOrderDe
 	// tidak clean — direct fetch di sini lebih explicit).
 	var order entity.Order
 	if err := s.DB.Preload("Items").Preload("Member").
-		Where("id = ? AND order_source = 'ecom' AND deleted_at IS NULL", orderID).
+		Where("id = ? AND order_source IN ('ecom','home') AND deleted_at IS NULL", orderID).
 		First(&order).Error; err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Order tidak ditemukan"}
 	}
@@ -338,6 +338,7 @@ func restoreStockForCancelled(tx *gorm.DB, orderID, label, actorID string) error
 			Type:      "in",
 			Quantity:  it.Quantity,
 			UnitType:  "individual",
+			Location:  "home",
 			UnitPrice: it.UnitPrice,
 			Reason:    "cancel",
 			Note:      fmt.Sprintf("Pesanan online %s (Order #%s)", label, shortID),
@@ -353,7 +354,7 @@ func restoreStockForCancelled(tx *gorm.DB, orderID, label, actorID string) error
 // admin tidak accidentally "mark shipped" order yang belum bayar.
 func (s *EcomAdminOrdersService) UpdateStatus(orderID, newStatus, changedBy string) (*dto.CustomerOrderDetail, *dto.ApiError) {
 	var order entity.Order
-	if err := s.DB.Where("id = ? AND order_source = 'ecom' AND deleted_at IS NULL", orderID).First(&order).Error; err != nil {
+	if err := s.DB.Where("id = ? AND order_source IN ('ecom','home') AND deleted_at IS NULL", orderID).First(&order).Error; err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Order tidak ditemukan"}
 	}
 
@@ -458,7 +459,7 @@ func (s *EcomAdminOrdersService) SetShipping(orderID, awb, courier, service, cha
 		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Nomor resi wajib"}
 	}
 	var order entity.Order
-	if err := s.DB.Where("id = ? AND order_source = 'ecom' AND deleted_at IS NULL", orderID).First(&order).Error; err != nil {
+	if err := s.DB.Where("id = ? AND order_source IN ('ecom','home') AND deleted_at IS NULL", orderID).First(&order).Error; err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Order tidak ditemukan"}
 	}
 	current := ""
@@ -753,7 +754,7 @@ func (s *EcomAdminOrdersService) CreateBiteshipShipment(orderID, changedBy strin
 	}
 
 	var order entity.Order
-	if err := s.DB.Preload("Items").Where("id = ? AND order_source = 'ecom' AND deleted_at IS NULL", orderID).First(&order).Error; err != nil {
+	if err := s.DB.Preload("Items").Where("id = ? AND order_source IN ('ecom','home') AND deleted_at IS NULL", orderID).First(&order).Error; err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Order tidak ditemukan"}
 	}
 	current := ""
@@ -926,7 +927,7 @@ func (s *EcomAdminOrdersService) CreateBiteshipShipment(orderID, changedBy strin
 func (s *EcomAdminOrdersService) HandleBiteshipWebhook(payload BiteshipWebhookPayload) *dto.ApiError {
 	// Cari order via biteship_order_id atau reference_id (kita set = orderID).
 	var order entity.Order
-	q := s.DB.Where("order_source = 'ecom' AND deleted_at IS NULL")
+	q := s.DB.Where("order_source IN ('ecom','home') AND deleted_at IS NULL")
 	if payload.OrderID != "" {
 		q = q.Where("biteship_order_id = ?", payload.OrderID)
 	} else if payload.ReferenceID != "" {
@@ -1040,7 +1041,7 @@ func (s *EcomAdminOrdersService) HandleBiteshipWebhook(payload BiteshipWebhookPa
 // resi sudah 'delivered' — sekarang admin bisa refresh dengan 1 klik.
 func (s *EcomAdminOrdersService) SyncBiteshipStatus(orderID, changedBy string) (*dto.CustomerOrderDetail, *dto.ApiError) {
 	var order entity.Order
-	if err := s.DB.Where("id = ? AND order_source = 'ecom' AND deleted_at IS NULL", orderID).First(&order).Error; err != nil {
+	if err := s.DB.Where("id = ? AND order_source IN ('ecom','home') AND deleted_at IS NULL", orderID).First(&order).Error; err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Order tidak ditemukan"}
 	}
 	if order.BiteshipOrderID == nil || *order.BiteshipOrderID == "" {

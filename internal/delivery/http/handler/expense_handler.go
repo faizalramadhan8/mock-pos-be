@@ -135,7 +135,8 @@ func (ctrl *ExpenseController) Delete(c *fiber.Ctx) error {
 func (ctrl *ExpenseController) ProfitLoss(c *fiber.Ctx) error {
 	from := c.Query("from", "")
 	to := c.Query("to", "")
-	resp, fail := ctrl.Service.ProfitLoss(from, to)
+	// source: "store" (Bekasi) | "home" (toko rumah) | kosong (gabungan)
+	resp, fail := ctrl.Service.ProfitLoss(from, to, c.Query("source", ""))
 	if fail != nil {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message})
 	}

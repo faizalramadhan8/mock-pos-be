@@ -222,8 +222,16 @@ func (s *ExpenseService) Delete(id string) *dto.ApiError {
 // Kalau suatu saat ongkir mau dihitung sebagai pendapatan, biaya kurirnya
 // WAJIB dicatat sebagai pengeluaran juga — kalau tidak, labanya kelebihan
 // terus. Jangan ubah baris ini tanpa itu.
-func (s *ExpenseService) ProfitLoss(from, to string) (*dto.ProfitLossResponse, *dto.ApiError) {
-	orders, err := s.OrderRepo.FindCompletedForAggregate(from, to)
+// ProfitLoss — `source`: "store" | "home" | "" (gabungan).
+//
+// CATATAN PENTING: pemisahan ini TUNTAS untuk pemasukan, BELUM untuk
+// pengeluaran. Tabel `expenses` tidak punya penanda tempat, jadi berapa pun
+// `source`-nya, pengeluaran yang dikurangkan tetap SELURUHNYA. Selama toko
+// rumah belum punya ongkos sendiri, ini tidak terasa; begitu punya, angkanya
+// menyesatkan ke dua arah sekaligus — Bekasi terlihat terlalu rugi, rumah
+// terlalu untung. Saat itu tiba, `expenses` wajib dapat kolom tempat.
+func (s *ExpenseService) ProfitLoss(from, to, source string) (*dto.ProfitLossResponse, *dto.ApiError) {
+	orders, err := s.OrderRepo.FindCompletedForAggregate(from, to, source)
 	if err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: err.Error()}
 	}

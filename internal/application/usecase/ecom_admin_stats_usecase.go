@@ -41,7 +41,7 @@ func (s *EcomAdminStatsService) GetDashboard() (*dto.EcomAdminDashboard, *dto.Ap
 	}
 	s.DB.Model(&entity.Order{}).
 		Select("ecom_status, COUNT(*) AS cnt").
-		Where("order_source = 'ecom' AND deleted_at IS NULL").
+		Where("order_source IN ('ecom','home') AND deleted_at IS NULL").
 		Group("ecom_status").Scan(&statusCounts)
 	dash.StatusCounts = map[string]int{}
 	for _, c := range statusCounts {
@@ -58,7 +58,7 @@ func (s *EcomAdminStatsService) GetDashboard() (*dto.EcomAdminDashboard, *dto.Ap
 	}
 	s.DB.Model(&entity.Order{}).
 		Select("COALESCE(SUM(total), 0) AS total, COUNT(*) AS count").
-		Where("order_source = 'ecom' AND deleted_at IS NULL AND payment_paid_at >= ? AND ecom_status IN ?", todayStart, activeStatus).
+		Where("order_source IN ('ecom','home') AND deleted_at IS NULL AND payment_paid_at >= ? AND ecom_status IN ?", todayStart, activeStatus).
 		Scan(&todayStats)
 	dash.TodayRevenue = todayStats.Total
 	dash.TodayOrders = todayStats.Count
@@ -69,7 +69,7 @@ func (s *EcomAdminStatsService) GetDashboard() (*dto.EcomAdminDashboard, *dto.Ap
 	}
 	s.DB.Model(&entity.Order{}).
 		Select("COALESCE(SUM(total), 0) AS total, COUNT(*) AS count").
-		Where("order_source = 'ecom' AND deleted_at IS NULL AND payment_paid_at >= ? AND ecom_status IN ?", monthStart, activeStatus).
+		Where("order_source IN ('ecom','home') AND deleted_at IS NULL AND payment_paid_at >= ? AND ecom_status IN ?", monthStart, activeStatus).
 		Scan(&monthStats)
 	dash.MonthRevenue = monthStats.Total
 	dash.MonthOrders = monthStats.Count
@@ -84,7 +84,7 @@ func (s *EcomAdminStatsService) GetDashboard() (*dto.EcomAdminDashboard, *dto.Ap
 	s.DB.Table("order_items oi").
 		Select("oi.product_id, oi.name, SUM(oi.quantity) AS qty_sum, SUM(oi.unit_price * oi.quantity) AS revenue").
 		Joins("JOIN orders o ON o.id = oi.order_id").
-		Where("o.order_source = 'ecom' AND o.deleted_at IS NULL AND o.payment_paid_at >= ? AND o.ecom_status IN ?", monthStart, activeStatus).
+		Where("o.order_source IN ('ecom','home') AND o.deleted_at IS NULL AND o.payment_paid_at >= ? AND o.ecom_status IN ?", monthStart, activeStatus).
 		Where("oi.product_id <> ''").
 		Group("oi.product_id, oi.name").
 		Order("qty_sum DESC").Limit(5).Scan(&topProducts)
@@ -107,10 +107,13 @@ func (s *EcomAdminStatsService) GetDashboard() (*dto.EcomAdminDashboard, *dto.Ap
 	s.DB.Model(&entity.EcomComplaint{}).Where("status IN ('open', 'in_review')").Count(&complaintPending)
 	dash.ComplaintsPending = int(complaintPending)
 
-	// Produk low-stock ecom untuk restock alert.
+	// Produk low-stock di rak RUMAH — ini panel toko rumah, jadi yang
+	// relevan `stock`. Membaca `stock` (rak Bekasi) akan memberi Bu
+	// Santi sinyal restock dari tumpukan yang salah: barang bisa menumpuk
+	// di Bekasi sementara rak rumah benar-benar kosong, atau sebaliknya.
 	var lowStockCount int64
 	s.DB.Model(&entity.Product{}).
-		Where("deleted_at IS NULL AND is_active = 1 AND ecom_is_available = 1 AND stock > 0 AND stock <= 5").
+		Where("location = 'home' AND deleted_at IS NULL AND is_active = 1 AND ecom_is_available = 1 AND stock > 0 AND stock <= 5").
 		Count(&lowStockCount)
 	dash.LowStockCount = int(lowStockCount)
 
@@ -124,7 +127,7 @@ func (s *EcomAdminStatsService) GetLowStock(limit int) ([]dto.EcomLowStockItem, 
 	}
 	var products []entity.Product
 	if err := s.DB.
-		Where("deleted_at IS NULL AND is_active = 1 AND ecom_is_available = 1 AND stock > 0 AND stock <= 5").
+		Where("location = 'home' AND deleted_at IS NULL AND is_active = 1 AND ecom_is_available = 1 AND stock > 0 AND stock <= 5").
 		Order("stock ASC").Limit(limit).Find(&products).Error; err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Gagal ambil low stock"}
 	}

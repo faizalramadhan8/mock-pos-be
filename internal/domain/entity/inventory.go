@@ -9,6 +9,9 @@ type StockMovement struct {
 	Type          string    `gorm:"type:varchar(10);not null" json:"type"`
 	Quantity      int       `gorm:"type:int;not null;default:0" json:"quantity"`
 	UnitType      string    `gorm:"type:varchar(20);not null;default:'individual'" json:"unit_type"`
+	// Location — tempat stoknya bergerak: 'store' (Bekasi) atau 'home'.
+	// Tanpa ini Pergerakan Stok mencampur dua tempat.
+	Location      string    `gorm:"type:varchar(10);not null;default:'store'" json:"location"`
 	UnitPrice     float64   `gorm:"type:decimal(15,2);not null;default:0" json:"unit_price"`
 	Reason        string    `gorm:"type:varchar(20);not null;default:''" json:"reason,omitempty"`
 	Note          string    `gorm:"type:text;null" json:"note,omitempty"`

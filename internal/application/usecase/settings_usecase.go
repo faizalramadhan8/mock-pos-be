@@ -73,9 +73,14 @@ func (s *SettingsService) AddBankAccount(req dto.AddBankAccountRequest) (*dto.Se
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Settings not found"}
 	}
 
+	loc := req.Location
+	if loc == "" {
+		loc = "store"
+	}
 	account := &entity.BankAccount{
 		ID:            uuid.New().String(),
 		SettingsID:    settings.ID,
+		Location:      loc,
 		BankName:      req.BankName,
 		AccountNumber: req.AccountNumber,
 		AccountHolder: req.AccountHolder,
@@ -115,6 +120,7 @@ func (s *SettingsService) toResponse(settings *entity.Settings) *dto.SettingsRes
 	for _, ba := range settings.BankAccounts {
 		resp.BankAccounts = append(resp.BankAccounts, dto.BankAccountResponse{
 			ID:            ba.ID,
+			Location:      ba.Location,
 			BankName:      ba.BankName,
 			AccountNumber: ba.AccountNumber,
 			AccountHolder: ba.AccountHolder,

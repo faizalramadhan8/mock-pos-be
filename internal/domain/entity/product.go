@@ -55,6 +55,14 @@ type Product struct {
 	Image         string         `gorm:"type:text;null" json:"image,omitempty"`
 	MinStock      int            `gorm:"type:int;not null;default:0" json:"min_stock"`
 	IsActive      bool           `gorm:"type:tinyint(1);not null;default:1" json:"is_active"`
+	// Location — tempat pemilik produk: 'store' (Bekasi) atau 'home' (toko
+	// rumah). Tiap tempat punya katalognya SENDIRI dan tidak melihat katalog
+	// yang lain. Barang yang dijual di dua tempat = dua baris produk.
+	//
+	// Penyaring paling menentukan ada di scan barcode POS: pencariannya
+	// mengambil yang pertama cocok, jadi tanpa penyaring ini kasir bisa
+	// menjual barang yang fisiknya ada di rumah.
+	Location      string         `gorm:"type:varchar(10);not null;default:'store'" json:"location"`
 	// IsRedeemable: TRUE = produk masuk katalog tebus poin. Admin tandai
 	// via halaman "Katalog Tebus Poin" di Stok. Default FALSE — semua
 	// produk existing tidak eligible sampai di-curate.

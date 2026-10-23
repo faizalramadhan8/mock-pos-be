@@ -12,6 +12,11 @@ type CreateProductRequest struct {
 	MemberPrice   *float64 `json:"member_price,omitempty"`
 	QtyPerBox     int      `json:"qty_per_box"`
 	Stock         int      `json:"stock"`
+	// Location — katalog pemilik produk. Kosong = 'store' (POS Bekasi).
+	// Panel rumah mengirim 'home'. Sengaja TIDAK bisa diubah lewat Update:
+	// memindahkan produk antar katalog = memindahkan stok antar tempat
+	// tanpa jejak, dan itu harus lewat opname di masing-masing tempat.
+	Location      string   `json:"location" validate:"omitempty,oneof=store home"`
 	Unit          string   `json:"unit" validate:"required"`
 	Image         string   `json:"image"`
 	MinStock      int      `json:"min_stock"`
@@ -108,6 +113,7 @@ type ProductResponse struct {
 	MemberPrice   *float64          `json:"member_price,omitempty"`
 	QtyPerBox     int               `json:"qty_per_box"`
 	Stock         int               `json:"stock"`
+	Location      string            `json:"location"`
 	Unit          string            `json:"unit"`
 	Image         string            `json:"image,omitempty"`
 	MinStock      int               `json:"min_stock"`

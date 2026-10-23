@@ -47,7 +47,7 @@ func reasonLabel(reason string) string {
 func (s *EcomComplaintService) Submit(userID string, req dto.ComplaintSubmitRequest) (*dto.ComplaintResponse, *dto.ApiError) {
 	// Verify ownership + eligibility.
 	var order entity.Order
-	if err := s.DB.Where("id = ? AND ecom_user_id = ? AND order_source = 'ecom' AND deleted_at IS NULL", req.OrderID, userID).
+	if err := s.DB.Where("id = ? AND ecom_user_id = ? AND order_source IN ('ecom','home') AND deleted_at IS NULL", req.OrderID, userID).
 		First(&order).Error; err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Pesanan tidak ditemukan"}
 	}

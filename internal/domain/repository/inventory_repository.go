@@ -15,11 +15,19 @@ func NewStockMovementRepository(ctx context.Context, db *gorm.DB) *StockMovement
 	return &StockMovementRepository{DB: db}
 }
 
-func (r *StockMovementRepository) FindAll(movementType string, limit, offset int) ([]entity.StockMovement, int64, error) {
+// FindAll — pergerakan stok untuk tab "Pergerakan Stok".
+//
+// `location` memisahkan tempat: "store" (Bekasi), "home" (toko rumah), atau
+// kosong untuk semuanya. POS selalu mengirim "store" — pergerakan stok rumah
+// hanya boleh terlihat di panel admin rumah (keputusan Fai 21 Okt 2026).
+func (r *StockMovementRepository) FindAll(movementType, location string, limit, offset int) ([]entity.StockMovement, int64, error) {
 	var movements []entity.StockMovement
 	var total int64
 
 	query := r.DB.Model(&entity.StockMovement{})
+	if location != "" {
+		query = query.Where("location = ?", location)
+	}
 	if movementType != "" && movementType != "all" {
 		query = query.Where("type = ?", movementType)
 	}
@@ -31,6 +39,8 @@ func (r *StockMovementRepository) FindAll(movementType string, limit, offset int
 	return movements, total, nil
 }
 
+// FindByProductID — riwayat satu produk. Tidak perlu menyaring tempat:
+// produknya sendiri sudah milik satu tempat.
 func (r *StockMovementRepository) FindByProductID(productID string) ([]entity.StockMovement, error) {
 	var movements []entity.StockMovement
 	if err := r.DB.Preload("Product").Preload("Supplier").Where("product_id = ?", productID).Order("created_at DESC").Find(&movements).Error; err != nil {

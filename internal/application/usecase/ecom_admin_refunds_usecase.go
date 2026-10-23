@@ -33,7 +33,7 @@ func NewEcomAdminRefundsService(ctx context.Context, db *gorm.DB) *EcomAdminRefu
 func (s *EcomAdminRefundsService) Create(adminID string, req dto.EcomRefundCreateRequest) (*dto.EcomRefundResponse, *dto.ApiError) {
 	// Verify order exists + is ecom order.
 	var order entity.Order
-	if err := s.DB.Where("id = ? AND order_source = 'ecom' AND deleted_at IS NULL", req.OrderID).
+	if err := s.DB.Where("id = ? AND order_source IN ('ecom','home') AND deleted_at IS NULL", req.OrderID).
 		First(&order).Error; err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Pesanan tidak ditemukan"}
 	}
@@ -88,6 +88,7 @@ func (s *EcomAdminRefundsService) Create(adminID string, req dto.EcomRefundCreat
 				Type:      "in",
 				Quantity:  item.Qty,
 				UnitType:  "individual",
+				Location:  "home",
 				Reason:    "refund",
 				Note:      fmt.Sprintf("Barang retur dari refund online (Order #%s)", req.OrderID[:8]),
 				CreatedBy: adminID,

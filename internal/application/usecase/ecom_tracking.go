@@ -60,7 +60,7 @@ var statusIndo = map[string]string{
 func (s *EcomOrdersService) GetTracking(userID, orderID string) (*dto.OrderTrackingResponse, *dto.ApiError) {
 	var order entity.Order
 	if err := s.DB.Where(
-		"id = ? AND ecom_user_id = ? AND order_source = 'ecom' AND deleted_at IS NULL", orderID, userID,
+		"id = ? AND ecom_user_id = ? AND order_source IN ('ecom','home') AND deleted_at IS NULL", orderID, userID,
 	).First(&order).Error; err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Pesanan tidak ditemukan"}
 	}

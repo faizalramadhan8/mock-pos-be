@@ -3,12 +3,14 @@ package handler
 import (
 	"context"
 	"fmt"
+	"strconv"
 
-	"github.com/gofiber/fiber/v2"
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
 	"github.com/faizalramadhan/pos-be/internal/application/usecase"
+	"github.com/faizalramadhan/pos-be/internal/domain/entity"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
 	"github.com/faizalramadhan/pos-be/pkg/util"
+	"github.com/gofiber/fiber/v2"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
 )
@@ -21,38 +23,45 @@ import (
 // POS field (stock, selling_price) tetap dikelola di POS Inventory —
 // strict separation per keputusan Bu Santi 20 Jul 2026.
 type EcomAdminController struct {
-	Log             *zerolog.Logger
-	AuthService     *usecase.AuthService
-	EcomAdminSvc    *usecase.EcomAdminService
-	EcomCategorySvc *usecase.EcomCategoryService
-	EcomOrdersSvc   *usecase.EcomAdminOrdersService
-	EcomVoucherSvc  *usecase.EcomVoucherService
-	EcomStatsSvc    *usecase.EcomAdminStatsService
-	EcomCustomerSvc *usecase.EcomAdminCustomersService
-	EcomRefundSvc   *usecase.EcomAdminRefundsService
+	Log              *zerolog.Logger
+	AuthService      *usecase.AuthService
+	EcomAdminSvc     *usecase.EcomAdminService
+	EcomCategorySvc  *usecase.EcomCategoryService
+	EcomOrdersSvc    *usecase.EcomAdminOrdersService
+	EcomVoucherSvc   *usecase.EcomVoucherService
+	EcomStatsSvc     *usecase.EcomAdminStatsService
+	EcomCustomerSvc  *usecase.EcomAdminCustomersService
+	EcomRefundSvc    *usecase.EcomAdminRefundsService
 	EcomSettingsSvc  *usecase.EcomAdminSettingsService
 	EcomBroadcastSvc *usecase.EcomAdminBroadcastsService
 	EcomAnalyticsSvc *usecase.EcomAdminAnalyticsService
 	EcomActivitySvc  *usecase.EcomAdminActivityService
+	// Katalog produk toko rumah — CRUD penuh, terpisah dari katalog POS.
+	EcomCatalogSvc *usecase.EcomAdminCatalogService
+	// DB — untuk pembacaan ringan yang tidak butuh usecase sendiri
+	// (mis. daftar kategori & pemasok untuk form produk).
+	DB *gorm.DB
 }
 
 func NewEcomAdminController(ctx context.Context) *EcomAdminController {
 	logger := ctx.Value(enum.LoggerCtxKey).(*zerolog.Logger)
 	db := ctx.Value(enum.GormCtxKey).(*gorm.DB)
 	return &EcomAdminController{
-		Log:             logger,
-		AuthService:     usecase.NewAuthService(ctx, db),
-		EcomAdminSvc:    usecase.NewEcomAdminService(ctx, db),
-		EcomCategorySvc: usecase.NewEcomCategoryService(ctx, db),
-		EcomOrdersSvc:   usecase.NewEcomAdminOrdersService(ctx, db),
-		EcomVoucherSvc:  usecase.NewEcomVoucherService(ctx, db),
-		EcomStatsSvc:    usecase.NewEcomAdminStatsService(ctx, db),
-		EcomCustomerSvc: usecase.NewEcomAdminCustomersService(ctx, db),
-		EcomRefundSvc:   usecase.NewEcomAdminRefundsService(ctx, db),
+		Log:              logger,
+		AuthService:      usecase.NewAuthService(ctx, db),
+		EcomAdminSvc:     usecase.NewEcomAdminService(ctx, db),
+		EcomCategorySvc:  usecase.NewEcomCategoryService(ctx, db),
+		EcomOrdersSvc:    usecase.NewEcomAdminOrdersService(ctx, db),
+		EcomVoucherSvc:   usecase.NewEcomVoucherService(ctx, db),
+		EcomStatsSvc:     usecase.NewEcomAdminStatsService(ctx, db),
+		EcomCustomerSvc:  usecase.NewEcomAdminCustomersService(ctx, db),
+		EcomRefundSvc:    usecase.NewEcomAdminRefundsService(ctx, db),
 		EcomSettingsSvc:  usecase.NewEcomAdminSettingsService(ctx, db),
 		EcomBroadcastSvc: usecase.NewEcomAdminBroadcastsService(ctx, db, usecase.NewPushService(ctx, db)),
 		EcomAnalyticsSvc: usecase.NewEcomAdminAnalyticsService(ctx, db),
 		EcomActivitySvc:  usecase.NewEcomAdminActivityService(ctx, db),
+		EcomCatalogSvc:   usecase.NewEcomAdminCatalogService(ctx, db),
+		DB:               db,
 	}
 }
 
@@ -617,4 +626,210 @@ func (ctrl *EcomAdminController) DeleteVoucher(c *fiber.Ctx) error {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
 	}
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "Voucher deleted"})
+}
+
+// ─── Katalog produk toko rumah ────────────────────────────────────────────
+//
+// Panel rumah punya katalognya sendiri: produk yang dibuat di sini tidak
+// pernah terlihat di POS, dan produk Bekasi tidak pernah terlihat di sini.
+// Semua penjaga kepemilikannya ada di usecase — handler cuma meneruskan.
+
+func (ctrl *EcomAdminController) CreateProduct(c *fiber.Ctx) error {
+	var req dto.CreateProductRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(dto.ApiResponse{
+			Code: fiber.ErrUnprocessableEntity.Code, Message: "Invalid body", Error: err.Error(),
+		})
+	}
+	if err := util.ValidateRequest(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{
+			Code: fiber.ErrBadRequest.Code, Message: "Validation failed", Error: err,
+		})
+	}
+	claims := c.Locals("session").(*dto.JWTClaims)
+	resp, fail := ctrl.EcomCatalogSvc.Create(req, claims.ID)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
+			Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message,
+		})
+	}
+	return c.Status(fiber.StatusCreated).JSON(dto.ApiResponse{Code: fiber.StatusCreated, Message: "successfully", Body: resp})
+}
+
+func (ctrl *EcomAdminController) UpdateProduct(c *fiber.Ctx) error {
+	var req dto.UpdateProductRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(dto.ApiResponse{
+			Code: fiber.ErrUnprocessableEntity.Code, Message: "Invalid body", Error: err.Error(),
+		})
+	}
+	claims := c.Locals("session").(*dto.JWTClaims)
+	resp, fail := ctrl.EcomCatalogSvc.Update(c.Params("id"), req, claims.ID)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
+			Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message,
+		})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "successfully", Body: resp})
+}
+
+func (ctrl *EcomAdminController) DeleteProduct(c *fiber.Ctx) error {
+	if fail := ctrl.EcomCatalogSvc.Delete(c.Params("id")); fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
+			Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message,
+		})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "successfully"})
+}
+
+// AdjustProductStock — satu-satunya jalur ubah stok rumah. Wajib alasan,
+// set absolut, menulis jejak ke `stock_movements`. Sengaja TIDAK disatukan
+// dengan UpdateProduct: form yang bisa menimpa stok diam-diam adalah
+// persis mekanisme yang bikin insiden Sunbay 26 Jul 2026.
+func (ctrl *EcomAdminController) AdjustProductStock(c *fiber.Ctx) error {
+	var req dto.StockAdjustmentRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(dto.ApiResponse{
+			Code: fiber.ErrUnprocessableEntity.Code, Message: "Invalid body", Error: err.Error(),
+		})
+	}
+	if err := util.ValidateRequest(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{
+			Code: fiber.ErrBadRequest.Code, Message: "Validation failed", Error: err,
+		})
+	}
+	claims := c.Locals("session").(*dto.JWTClaims)
+	resp, fail := ctrl.EcomCatalogSvc.AdjustStock(c.Params("id"), req, claims.ID)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
+			Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message,
+		})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "successfully", Body: resp})
+}
+
+// ListStockMovements — riwayat pergerakan stok toko rumah.
+//
+// Bu Santi melihat pergerakan stok rumah HANYA di sini (keputusan Fai
+// 21 Okt 2026); POS menyaringnya keluar. `location` dipaksa "home" dan
+// tidak dibaca dari query — panel rumah tidak boleh bisa mengintip
+// pergerakan stok Bekasi dengan mengganti parameter.
+func (ctrl *EcomAdminController) ListStockMovements(c *fiber.Ctx) error {
+	page, _ := strconv.Atoi(c.Query("page", "1"))
+	limit, _ := strconv.Atoi(c.Query("limit", "30"))
+	movements, total, fail := ctrl.EcomCatalogSvc.Inventory.GetAllMovements(
+		c.Query("type", ""), "home", page, limit,
+	)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
+			Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message,
+		})
+	}
+	return c.JSON(dto.ApiResponse{
+		Code: fiber.StatusOK, Message: "successfully", Body: movements,
+		Meta: map[string]interface{}{"total": total, "page": page, "limit": limit},
+	})
+}
+
+// ListCatalogRefs — kategori + pemasok POS untuk form produk panel rumah.
+//
+// Kategori dan pemasok dipakai BERSAMA oleh kedua tempat (keputusan Fai
+// 21 Okt 2026): distributornya sama, dan dua daftar kategori terpisah
+// berarti dua daftar yang harus dirawat. Yang terpisah cuma produknya.
+//
+// Dikirim dalam satu panggilan supaya form tidak perlu dua kali jalan.
+func (ctrl *EcomAdminController) ListCatalogRefs(c *fiber.Ctx) error {
+	type ref struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	out := struct {
+		Categories []ref `json:"categories"`
+		Suppliers  []ref `json:"suppliers"`
+	}{Categories: []ref{}, Suppliers: []ref{}}
+
+	var cats []entity.Category
+	if err := ctrl.DB.Where("deleted_at IS NULL").Order("name ASC").Find(&cats).Error; err == nil {
+		for _, c := range cats {
+			out.Categories = append(out.Categories, ref{ID: c.ID, Name: c.Name})
+		}
+	}
+	var sups []entity.Supplier
+	if err := ctrl.DB.Where("deleted_at IS NULL").Order("name ASC").Find(&sups).Error; err == nil {
+		for _, sp := range sups {
+			out.Suppliers = append(out.Suppliers, ref{ID: sp.ID, Name: sp.Name})
+		}
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "successfully", Body: out})
+}
+
+
+// ─── Harga grosir produk rumah ────────────────────────────────────────────
+//
+// Semua penjaga kepemilikan ada di usecase: endpoint ini menolak id produk
+// maupun id tier milik Bekasi dengan "tidak ditemukan", sehingga panel rumah
+// tidak bisa menyenggol harga di konter kasir.
+
+func (ctrl *EcomAdminController) ListProductTiers(c *fiber.Ctx) error {
+	resp, fail := ctrl.EcomCatalogSvc.ListTiers(c.Params("id"))
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
+			Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message,
+		})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "successfully", Body: resp})
+}
+
+func (ctrl *EcomAdminController) CreateProductTier(c *fiber.Ctx) error {
+	var req dto.SavePriceTierRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(dto.ApiResponse{
+			Code: fiber.ErrUnprocessableEntity.Code, Message: "Invalid body", Error: err.Error(),
+		})
+	}
+	if err := util.ValidateRequest(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{
+			Code: fiber.ErrBadRequest.Code, Message: "Validation failed", Error: err,
+		})
+	}
+	claims := c.Locals("session").(*dto.JWTClaims)
+	resp, fail := ctrl.EcomCatalogSvc.CreateTier(c.Params("id"), req, &claims.ID)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
+			Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message,
+		})
+	}
+	return c.Status(fiber.StatusCreated).JSON(dto.ApiResponse{Code: fiber.StatusCreated, Message: "successfully", Body: resp})
+}
+
+func (ctrl *EcomAdminController) UpdateProductTier(c *fiber.Ctx) error {
+	var req dto.SavePriceTierRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(dto.ApiResponse{
+			Code: fiber.ErrUnprocessableEntity.Code, Message: "Invalid body", Error: err.Error(),
+		})
+	}
+	if err := util.ValidateRequest(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{
+			Code: fiber.ErrBadRequest.Code, Message: "Validation failed", Error: err,
+		})
+	}
+	claims := c.Locals("session").(*dto.JWTClaims)
+	resp, fail := ctrl.EcomCatalogSvc.UpdateTier(c.Params("tierId"), req, &claims.ID)
+	if fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
+			Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message,
+		})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "successfully", Body: resp})
+}
+
+func (ctrl *EcomAdminController) DeleteProductTier(c *fiber.Ctx) error {
+	claims := c.Locals("session").(*dto.JWTClaims)
+	if fail := ctrl.EcomCatalogSvc.DeleteTier(c.Params("tierId"), &claims.ID); fail != nil {
+		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
+			Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message,
+		})
+	}
+	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "successfully"})
 }

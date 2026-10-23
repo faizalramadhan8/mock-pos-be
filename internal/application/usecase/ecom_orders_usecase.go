@@ -122,7 +122,7 @@ func (s *EcomOrdersService) List(userID string) ([]dto.CustomerOrderListItem, *d
 func (s *EcomOrdersService) CancelPending(userID, orderID string) (*dto.CustomerOrderDetail, *dto.ApiError) {
 	var order entity.Order
 	if err := s.DB.Preload("Items").
-		Where("id = ? AND ecom_user_id = ? AND order_source = 'ecom' AND deleted_at IS NULL", orderID, userID).
+		Where("id = ? AND ecom_user_id = ? AND order_source IN ('ecom','home') AND deleted_at IS NULL", orderID, userID).
 		First(&order).Error; err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Pesanan tidak ditemukan"}
 	}
@@ -163,6 +163,7 @@ func (s *EcomOrdersService) CancelPending(userID, orderID string) (*dto.Customer
 			Type:      "in",
 			Quantity:  it.Quantity,
 			UnitType:  "individual",
+			Location:  "home",
 			UnitPrice: it.UnitPrice,
 			Reason:    "cancel",
 			Note:      fmt.Sprintf("Pesanan online dibatalkan customer (Order #%s)", orderID[:8]),
@@ -208,7 +209,7 @@ func (s *EcomOrdersService) SubmitPaymentProof(userID, orderID, proofURL string)
 	}
 
 	var order entity.Order
-	if err := s.DB.Where("id = ? AND ecom_user_id = ? AND order_source = 'ecom' AND deleted_at IS NULL", orderID, userID).
+	if err := s.DB.Where("id = ? AND ecom_user_id = ? AND order_source IN ('ecom','home') AND deleted_at IS NULL", orderID, userID).
 		First(&order).Error; err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Pesanan tidak ditemukan"}
 	}
@@ -239,7 +240,7 @@ func (s *EcomOrdersService) SubmitPaymentProof(userID, orderID, proofURL string)
 func (s *EcomOrdersService) RetryPayment(userID, orderID string) (*dto.CustomerOrderDetail, *dto.ApiError) {
 	var order entity.Order
 	if err := s.DB.Preload("Items").
-		Where("id = ? AND ecom_user_id = ? AND order_source = 'ecom' AND deleted_at IS NULL", orderID, userID).
+		Where("id = ? AND ecom_user_id = ? AND order_source IN ('ecom','home') AND deleted_at IS NULL", orderID, userID).
 		First(&order).Error; err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Pesanan tidak ditemukan"}
 	}
@@ -379,7 +380,7 @@ func (s *EcomOrdersService) RetryPayment(userID, orderID string) (*dto.CustomerO
 //   - Audit data akurat: terima ≠ kurir tag delivered
 func (s *EcomOrdersService) ConfirmReceived(userID, orderID string) (*dto.CustomerOrderDetail, *dto.ApiError) {
 	var order entity.Order
-	if err := s.DB.Where("id = ? AND ecom_user_id = ? AND order_source = 'ecom' AND deleted_at IS NULL", orderID, userID).
+	if err := s.DB.Where("id = ? AND ecom_user_id = ? AND order_source IN ('ecom','home') AND deleted_at IS NULL", orderID, userID).
 		First(&order).Error; err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Order tidak ditemukan"}
 	}

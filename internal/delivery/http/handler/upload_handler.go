@@ -62,6 +62,8 @@ func (ctrl *UploadController) UploadImage(c *fiber.Ctx) error {
 		uploadDir = "storage/products"
 	case "payment-proof":
 		uploadDir = "storage/payment-proof"
+	case "store-logo":
+		uploadDir = "storage/store-logo"
 	default:
 		uploadDir = "storage/uploads"
 	}

@@ -32,7 +32,10 @@ func NewEcomAdminService(ctx context.Context, db *gorm.DB) *EcomAdminService {
 func (s *EcomAdminService) ListProducts(search, cursor string, limit int) ([]dto.EcomAdminProductResponse, string, *dto.ApiError) {
 	var products []entity.Product
 
-	q := s.DB.Model(&entity.Product{}).Where("deleted_at IS NULL")
+	// Katalog panel rumah = produk rumah saja. Produk Bekasi dikelola di POS
+	// dan tidak boleh terlihat di sini — masing-masing tempat punya
+	// katalognya sendiri dan tidak tahu katalog yang lain.
+	q := s.DB.Model(&entity.Product{}).Where("location = 'home' AND deleted_at IS NULL")
 
 	if search != "" {
 		like := "%" + search + "%"
@@ -66,7 +69,7 @@ func (s *EcomAdminService) ListProducts(search, cursor string, limit int) ([]dto
 // GetProduct — detail single untuk admin edit page.
 func (s *EcomAdminService) GetProduct(id string) (*dto.EcomAdminProductResponse, *dto.ApiError) {
 	var product entity.Product
-	if err := s.DB.Preload("EcomCategory").Where("id = ? AND deleted_at IS NULL", id).First(&product).Error; err != nil {
+	if err := s.DB.Preload("EcomCategory").Where("id = ? AND location = 'home' AND deleted_at IS NULL", id).First(&product).Error; err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Product not found"}
 	}
 	resp := toEcomAdminProductResponse(&product)
@@ -88,7 +91,7 @@ func (s *EcomAdminService) BulkSetAvailable(ids []string, available bool) (*Bulk
 		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Pilih minimal 1 produk"}
 	}
 	res := s.DB.Model(&entity.Product{}).
-		Where("id IN ? AND deleted_at IS NULL", ids).
+		Where("id IN ? AND location = 'home' AND deleted_at IS NULL", ids).
 		Update("ecom_is_available", available)
 	if res.Error != nil {
 		s.Log.Error().Err(res.Error).Msg("Bulk set availability failed")
@@ -107,7 +110,7 @@ func (s *EcomAdminService) BulkSyncPrice(ids []string) (*BulkUpdateResult, *dto.
 	// UPDATE dengan expression SET ecom_price = selling_price (per-row).
 	// Skip WHERE selling_price > 0 supaya tidak overwrite dengan 0.
 	res := s.DB.Exec(
-		"UPDATE products SET ecom_price = selling_price WHERE id IN ? AND deleted_at IS NULL AND selling_price > 0",
+		"UPDATE products SET ecom_price = selling_price WHERE id IN ? AND location = 'home' AND deleted_at IS NULL AND selling_price > 0",
 		ids,
 	)
 	if res.Error != nil {
@@ -124,7 +127,7 @@ func (s *EcomAdminService) BulkResetPrice(ids []string) (*BulkUpdateResult, *dto
 		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Pilih minimal 1 produk"}
 	}
 	res := s.DB.Model(&entity.Product{}).
-		Where("id IN ? AND deleted_at IS NULL", ids).
+		Where("id IN ? AND location = 'home' AND deleted_at IS NULL", ids).
 		Update("ecom_price", nil)
 	if res.Error != nil {
 		s.Log.Error().Err(res.Error).Msg("Bulk reset price failed")
@@ -138,7 +141,7 @@ func (s *EcomAdminService) BulkResetPrice(ids []string) (*BulkUpdateResult, *dto
 // zero-value overwrite (Updates dengan struct skip zero values by default).
 func (s *EcomAdminService) UpdateEcomFields(id string, req dto.EcomFieldsUpdateRequest, changedBy string) (*dto.EcomAdminProductResponse, *dto.ApiError) {
 	var product entity.Product
-	if err := s.DB.Where("id = ? AND deleted_at IS NULL", id).First(&product).Error; err != nil {
+	if err := s.DB.Where("id = ? AND location = 'home' AND deleted_at IS NULL", id).First(&product).Error; err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Product not found"}
 	}
 
@@ -146,9 +149,9 @@ func (s *EcomAdminService) UpdateEcomFields(id string, req dto.EcomFieldsUpdateR
 	// explicit control tiap kolom + support setNULL untuk pointer field
 	// (kalau user kosongkan input).
 	//
-	// CATATAN: `stock_ecom` sengaja TIDAK lagi bisa di-patch dari sini.
-	// Sejak stok toko dan online digabung (migration 000073) angka stok cuma
-	// satu, dan satu-satunya jalur ubah stok yang sah adalah endpoint
+	// CATATAN: stok sengaja TIDAK bisa di-patch dari sini. Angka yang
+	// ditampilkan panel ini adalah `stock` (rak rumah, migration
+	// 000075), dan satu-satunya jalur ubah stok yang sah adalah endpoint
 	// Sesuaikan Stok di POS — yang mewajibkan alasan + menulis audit trail.
 	// Kalau field ini dihidupkan lagi, panel ecom bisa menimpa stok tanpa
 	// jejak, persis insiden Sunbay 26 Jul 2026.
@@ -157,7 +160,7 @@ func (s *EcomAdminService) UpdateEcomFields(id string, req dto.EcomFieldsUpdateR
 	if req.StockEcom != nil {
 		return nil, &dto.ApiError{
 			StatusCode: fiber.ErrBadRequest,
-			Message:    "Stok sekarang digabung dengan stok toko. Ubah lewat menu Stok → Sesuaikan Stok di POS supaya tercatat alasannya.",
+			Message:    "Stok rumah diubah lewat menu Stok → Sesuaikan Stok di POS, pilih rak Online Rumah, supaya tercatat alasannya.",
 		}
 	}
 	if req.EcomIsAvailable != nil {

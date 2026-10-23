@@ -13,7 +13,7 @@ import (
 )
 
 // EcomPublicService — public storefront queries. Semua filter WHERE
-// ecom_is_available=1 AND stock>0 AND deleted_at IS NULL — customer
+// location='home' AND ecom_is_available=1 AND stock>0 — customer
 // hanya lihat produk yang benar-benar ready to buy.
 type EcomPublicService struct {
 	DB  *gorm.DB
@@ -45,7 +45,7 @@ func (s *EcomPublicService) ListCategories() ([]dto.EcomCategoryResponse, *dto.A
 					AND p.deleted_at IS NULL
 					AND p.is_active = 1
 					AND p.ecom_is_available = 1
-					AND p.stock > 0), 0) AS product_count`).
+					AND p.location = 'home' AND p.stock > 0), 0) AS product_count`).
 		Where("c.deleted_at IS NULL AND c.is_active = 1").
 		Having("product_count > 0").
 		Order("c.sort_order ASC, c.name ASC").
@@ -72,6 +72,7 @@ func (s *EcomPublicService) ListCategories() ([]dto.EcomCategoryResponse, *dto.A
 
 // ListProducts — cursor pagination + filter kategori + search + sort.
 // Semua WHERE clause enforce ecom_is_available + stock > 0.
+// `stock` = stok di rumah; `stock` adalah rak Bekasi dan tidak dijual online.
 // ListProductsFilter — Sprint 2 #7 — filter tambahan untuk Cari/Katalog page.
 type ListProductsFilter struct {
 	MinPrice float64
@@ -87,7 +88,7 @@ func (s *EcomPublicService) ListProductsFiltered(categoryID, search, sort, curso
 	var products []entity.Product
 
 	q := s.DB.Model(&entity.Product{}).
-		Where("deleted_at IS NULL AND is_active = 1 AND ecom_is_available = 1 AND stock > 0")
+		Where("location = 'home' AND deleted_at IS NULL AND is_active = 1 AND ecom_is_available = 1 AND stock > 0")
 
 	if categoryID != "" {
 		q = q.Where("ecom_category_id = ?", categoryID)
@@ -158,7 +159,7 @@ func (s *EcomPublicService) ListProductsFiltered(categoryID, search, sort, curso
 func (s *EcomPublicService) GetProduct(id string) (*dto.EcomProductDetail, *dto.ApiError) {
 	var product entity.Product
 	err := s.DB.Preload("EcomCategory").Preload("Category").
-		Where("id = ? AND deleted_at IS NULL AND is_active = 1 AND ecom_is_available = 1", id).
+		Where("id = ? AND location = 'home' AND deleted_at IS NULL AND is_active = 1 AND ecom_is_available = 1", id).
 		First(&product).Error
 	if err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Produk tidak tersedia"}
@@ -211,13 +212,13 @@ func (s *EcomPublicService) GetRelated(productID string, limit int) ([]dto.EcomP
 	// Ambil current product untuk tahu category-nya.
 	var current entity.Product
 	if err := s.DB.Select("id, category_id, ecom_category_id").
-		Where("id = ? AND deleted_at IS NULL", productID).First(&current).Error; err != nil {
+		Where("id = ? AND location = 'home' AND deleted_at IS NULL", productID).First(&current).Error; err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Produk tidak ditemukan"}
 	}
 
 	// Query produk lain di category sama.
 	q := s.DB.Model(&entity.Product{}).
-		Where("id <> ? AND deleted_at IS NULL AND is_active = 1 AND ecom_is_available = 1 AND stock > 0", productID)
+		Where("id <> ? AND location = 'home' AND deleted_at IS NULL AND is_active = 1 AND ecom_is_available = 1 AND stock > 0", productID)
 	// Prefer ecom_category kalau ada, fallback ke category POS.
 	if current.EcomCategoryID != nil && *current.EcomCategoryID != "" {
 		q = q.Where("ecom_category_id = ?", *current.EcomCategoryID)

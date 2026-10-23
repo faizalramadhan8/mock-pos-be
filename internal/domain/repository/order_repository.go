@@ -40,6 +40,14 @@ func (r *OrderRepository) FindAll(status, source string, limit, offset int) ([]e
 		query = query.Where("(order_source = 'pos' OR order_source IS NULL OR order_source = '')")
 	case "ecom":
 		query = query.Where("order_source = 'ecom'")
+	case "home":
+		// Toko rumah — unit usaha terpisah dari Bekasi.
+		query = query.Where("order_source = 'home'")
+	case "store":
+		// Semua yang terjadi DI Bekasi: kasir + (nanti) storefront Bekasi.
+		// Ini yang dipakai Bu Santi saat closing — uang rumah masuk rekening
+		// lain dan tidak pernah lewat laci kasir Bekasi.
+		query = query.Where("(order_source IN ('pos','ecom') OR order_source IS NULL OR order_source = '')")
 	}
 	if status != "" && status != "all" {
 		query = query.Where("status = ?", status)
@@ -104,9 +112,22 @@ func (r *OrderRepository) FindCompletedSince(since time.Time) ([]entity.Order, e
 // untuk Reports + Dashboard yang scale buruk pada volume tinggi).
 //
 // from/to: YYYY-MM-DD string. Empty = no bound. Range inclusive both sides.
-func (r *OrderRepository) FindCompletedForAggregate(from, to string) ([]entity.Order, error) {
+// FindCompletedForAggregate — pesanan lunas untuk laporan.
+//
+// `source` memisahkan tempat usaha: "store" = Bekasi (kasir + nanti
+// storefront Bekasi), "home" = toko rumah, kosong = gabungan. Bu Santi
+// 18 Okt 2026 minta keduanya terpisah karena uang toko rumah masuk rekening
+// sendiri dan tidak pernah lewat laci kasir Bekasi — kalau digabung,
+// angkanya tidak akan pernah cocok saat closing.
+func (r *OrderRepository) FindCompletedForAggregate(from, to, source string) ([]entity.Order, error) {
 	var orders []entity.Order
 	q := r.DB.Model(&entity.Order{}).Where("status = ?", "completed")
+	switch source {
+	case "home":
+		q = q.Where("order_source = 'home'")
+	case "store":
+		q = q.Where("(order_source IN ('pos','ecom') OR order_source IS NULL OR order_source = '')")
+	}
 	if from != "" {
 		q = q.Where("DATE(created_at) >= ?", from)
 	}

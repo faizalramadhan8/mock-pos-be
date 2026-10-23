@@ -126,6 +126,10 @@ func (s *ProductService) Create(req dto.CreateProductRequest, userID string) (*d
 		return nil, &dto.ApiError{StatusCode: fiber.ErrConflict, Message: "SKU already exists"}
 	}
 
+	loc := req.Location
+	if loc == "" {
+		loc = "store"
+	}
 	product := &entity.Product{
 		ID:            uuid.New().String(),
 		SKU:           req.SKU,
@@ -143,6 +147,7 @@ func (s *ProductService) Create(req dto.CreateProductRequest, userID string) (*d
 		Image:         req.Image,
 		MinStock:      req.MinStock,
 		IsActive:      true,
+		Location:      loc,
 	}
 
 	if product.QtyPerBox == 0 {
@@ -171,6 +176,7 @@ func (s *ProductService) Create(req dto.CreateProductRequest, userID string) (*d
 			Type:      "in",
 			Quantity:  product.Stock,
 			UnitType:  "individual",
+			Location:  loc,
 			UnitPrice: product.PurchasePrice,
 			Reason:    "initial",
 			Note:      "Stok awal saat produk dibuat",
@@ -442,6 +448,7 @@ func (s *ProductService) toResponse(p *entity.Product) dto.ProductResponse {
 		MemberPrice:   p.MemberPrice,
 		QtyPerBox:     p.QtyPerBox,
 		Stock:         p.Stock,
+		Location:      p.Location,
 		Unit:          p.Unit,
 		Image:         p.Image,
 		MinStock:      p.MinStock,

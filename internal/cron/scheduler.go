@@ -157,7 +157,7 @@ func (s *Scheduler) runEcomExpireUnpaid() {
 		// Skenario nyatanya sederhana: transfer Sabtu malam, Bu Santi buka
 		// rekening Senin. Cron jalan tiap jam, jadi pesanannya sudah hangus
 		// jauh sebelum sempat dilihat.
-		Where(`order_source = 'ecom' AND ecom_status = 'pending_payment'
+		Where(`order_source IN ('ecom','home') AND ecom_status = 'pending_payment'
 		       AND created_at <= ? AND deleted_at IS NULL
 		       AND (payment_proof IS NULL OR payment_proof = '')`, cutoff).
 		Limit(200).Find(&orders).Error; err != nil {
@@ -200,6 +200,7 @@ func (s *Scheduler) runEcomExpireUnpaid() {
 					Type:      "in",
 					Quantity:  it.Quantity,
 					UnitType:  "individual",
+					Location:  "home",
 					UnitPrice: it.UnitPrice,
 					Reason:    "cancel",
 					Note:      fmt.Sprintf("Pesanan online kedaluwarsa, tidak dibayar (Order #%s)", o.ID[:8]),
@@ -232,7 +233,7 @@ func (s *Scheduler) runEcomAutoComplete() {
 	res := s.DB.Exec(`
 		UPDATE orders
 		SET ecom_status = 'completed', status = 'completed'
-		WHERE order_source = 'ecom'
+		WHERE order_source IN ('ecom','home')
 		  AND ecom_status = 'delivered'
 		  AND ecom_delivered_at IS NOT NULL
 		  AND ecom_delivered_at <= ?

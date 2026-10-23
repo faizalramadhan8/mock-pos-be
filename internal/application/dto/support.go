@@ -124,6 +124,9 @@ type UpdateSettingsRequest struct {
 }
 
 type AddBankAccountRequest struct {
+	// Location — 'store' (Bekasi) atau 'home'. Kosong = 'store', supaya
+	// pemanggil lama tidak berubah perilakunya.
+	Location      string `json:"location" validate:"omitempty,oneof=store home"`
 	BankName      string `json:"bank_name" validate:"required"`
 	AccountNumber string `json:"account_number" validate:"required"`
 	AccountHolder string `json:"account_holder" validate:"required"`
@@ -142,6 +145,7 @@ type SettingsResponse struct {
 
 type BankAccountResponse struct {
 	ID            string `json:"id"`
+	Location      string `json:"location"`
 	BankName      string `json:"bank_name"`
 	AccountNumber string `json:"account_number"`
 	AccountHolder string `json:"account_holder"`

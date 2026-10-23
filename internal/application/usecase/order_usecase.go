@@ -895,8 +895,9 @@ func (s *OrderService) GetRevenueStats() (float64, int64, *dto.ApiError) {
 //
 // Empty from/to = all-time. Inclusive both sides. Filter status='completed'
 // only (cancelled/refunded skip — konsisten dengan Reports/Dashboard convention).
-func (s *OrderService) Aggregate(from, to string) (*dto.OrderAggregateResponse, *dto.ApiError) {
-	orders, err := s.Repo.FindCompletedForAggregate(from, to)
+// `source`: "store" (Bekasi) | "home" (toko rumah) | kosong (gabungan).
+func (s *OrderService) Aggregate(from, to, source string) (*dto.OrderAggregateResponse, *dto.ApiError) {
+	orders, err := s.Repo.FindCompletedForAggregate(from, to, source)
 	if err != nil {
 		s.Log.Error().Err(err).Msg("Failed to fetch orders for aggregation")
 		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to aggregate orders"}

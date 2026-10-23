@@ -91,6 +91,11 @@ func (Settings) TableName() string { return "settings" }
 type BankAccount struct {
 	ID            string    `gorm:"type:varchar(36);primary_key;not null" json:"id"`
 	SettingsID    string    `gorm:"type:varchar(36);not null" json:"settings_id"`
+	// Location — rekening ini milik tempat mana: 'store' (Bekasi) atau
+	// 'home'. Storefront rumah HANYA menampilkan rekening 'home'; kalau
+	// semua ditampilkan, sebagian customer transfer ke rekening Bekasi dan
+	// pembukuan yang sudah dipisah tercampur lagi di titik paling awal.
+	Location      string    `gorm:"type:varchar(10);not null;default:'store'" json:"location"`
 	BankName      string    `gorm:"type:varchar(100);not null" json:"bank_name"`
 	AccountNumber string    `gorm:"type:varchar(50);not null" json:"account_number"`
 	AccountHolder string    `gorm:"type:varchar(200);not null" json:"account_holder"`
