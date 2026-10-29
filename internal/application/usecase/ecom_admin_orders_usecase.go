@@ -59,8 +59,8 @@ func NewEcomAdminOrdersService(ctx context.Context, db *gorm.DB) *EcomAdminOrder
 
 // shippingClient — klien Biteship dengan titik asal dari ecom_settings.
 // Lihat biteshipWithStoreOrigin di ecom_shipping_usecase.go.
-func (s *EcomAdminOrdersService) shippingClient() *biteship.Client {
-	return biteshipWithStoreOrigin(s.DB, s.Biteship)
+func (s *EcomAdminOrdersService) shippingClient(location string) *biteship.Client {
+	return biteshipWithStoreOrigin(s.DB, s.Biteship, location)
 }
 
 // SendOrderStatusEmail — kirim email notif ke customer setiap kali order
@@ -197,9 +197,17 @@ func (s *EcomAdminOrdersService) SendOrderStatusEmail(orderID, newStatus string)
 
 // AdminList — semua ecom orders, filter by status/search, cursor pagination.
 // Return list untuk table view di admin panel Pesanan Online.
-func (s *EcomAdminOrdersService) List(status, search, cursor string, limit int) (*dto.EcomAdminOrderListResponse, *dto.ApiError) {
+// List — `location` kosong = Gabungan (dua toko), "home"/"store" = satu toko.
+//
+// Catatan: sampai 30 Okt 2026 penyaringnya `order_source = 'ecom'` — satu
+// nilai, sementara semua fungsi lain di berkas ini memakai IN ('ecom','home').
+// Artinya daftar pesanan admin TIDAK PERNAH menampilkan pesanan toko rumah,
+// yaitu satu-satunya pesanan yang storefront buat sejak 21 Okt 2026. Tidak
+// ketahuan hanya karena belum ada pesanan sungguhan di database.
+func (s *EcomAdminOrdersService) List(status, search, cursor, location string, limit int) (*dto.EcomAdminOrderListResponse, *dto.ApiError) {
+	sumber := SumberPesananTempat(location)
 	q := s.DB.Model(&entity.Order{}).
-		Where("order_source = ? AND deleted_at IS NULL", "ecom")
+		Where("order_source IN ? AND deleted_at IS NULL", sumber)
 
 	// Sprint 4 Chunk 4 (31 Jul 2026) — search mode auto-cover semua status.
 	// Kalau admin sudah kasih search keyword, ignore status filter — dia lagi
@@ -257,6 +265,14 @@ func (s *EcomAdminOrdersService) List(status, search, cursor string, limit int) 
 			AWB:           ptrString(o.ShippingAWB),
 			CreatedAt:     o.CreatedAt.Format(time.RFC3339),
 			PaymentMethod: o.Payment,
+			Location:      TempatDariOrderSource(o.OrderSource),
+			StoreName:     NamaToko(s.DB, TempatDariOrderSource(o.OrderSource)),
+			CheckoutGroupID: func() string {
+				if o.CheckoutGroupID == nil {
+					return ""
+				}
+				return *o.CheckoutGroupID
+			}(),
 		})
 	}
 
@@ -270,9 +286,11 @@ func (s *EcomAdminOrdersService) List(status, search, cursor string, limit int) 
 		EcomStatus string
 		Cnt        int
 	}
+	// Hitungan badge ikut penyaring tempat — angka yang tidak sejalan dengan
+	// daftar di bawahnya membuat orang mengira ada pesanan yang hilang.
 	s.DB.Model(&entity.Order{}).
 		Select("ecom_status, COUNT(*) as cnt").
-		Where("order_source IN ('ecom','home') AND deleted_at IS NULL").
+		Where("order_source IN ? AND deleted_at IS NULL", sumber).
 		Group("ecom_status").Scan(&counts)
 	countMap := map[string]int{}
 	for _, c := range counts {
@@ -299,7 +317,9 @@ func (s *EcomAdminOrdersService) GetDetail(orderID string) (*dto.CustomerOrderDe
 	}
 	// Build response mirror customer detail — kalau nanti admin butuh field
 	// extra (mis. IP, device fingerprint) tinggal extend di sini.
-	return buildEcomOrderDetail(&order), nil
+	detail := buildEcomOrderDetail(&order)
+	IsiInfoGrupCheckout(s.DB, &order, detail)
+	return detail, nil
 }
 
 // restoreStockForCancelled — kembalikan stok pesanan yang batal/retur +
@@ -338,7 +358,7 @@ func restoreStockForCancelled(tx *gorm.DB, orderID, label, actorID string) error
 			Type:      "in",
 			Quantity:  it.Quantity,
 			UnitType:  "individual",
-			Location:  "home",
+			Location:  TempatProduk(tx, it.ProductID),
 			UnitPrice: it.UnitPrice,
 			Reason:    "cancel",
 			Note:      fmt.Sprintf("Pesanan online %s (Order #%s)", label, shortID),
@@ -746,16 +766,18 @@ func normalizeCourierService(s string) string {
 //     saat kurir konfirmasi pickup). Admin bisa mark shipped manual kalau
 //     tidak sabar.
 func (s *EcomAdminOrdersService) CreateBiteshipShipment(orderID, changedBy string) (*dto.CustomerOrderDetail, *dto.ApiError) {
-	if !s.shippingClient().CanCreateOrder() {
-		return nil, &dto.ApiError{
-			StatusCode: fiber.ErrBadRequest,
-			Message:    "Biteship shipper info belum di-set (BITESHIP_ORIGIN_NAME/PHONE/ADDRESS). Cek .env di server.",
-		}
-	}
-
+	// Order dimuat DULU: titik jemputnya tergantung toko mana yang menjual,
+	// jadi kelengkapan shipper info pun harus diperiksa untuk toko itu.
 	var order entity.Order
 	if err := s.DB.Preload("Items").Where("id = ? AND order_source IN ('ecom','home') AND deleted_at IS NULL", orderID).First(&order).Error; err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Order tidak ditemukan"}
+	}
+	tempat := TempatDariOrderSource(order.OrderSource)
+	if !s.shippingClient(tempat).CanCreateOrder() {
+		return nil, &dto.ApiError{
+			StatusCode: fiber.ErrBadRequest,
+			Message:    "Alamat penjemputan toko ini belum lengkap. Isi di Pengaturan → Info Toko (nama, nomor HP, alamat jemput).",
+		}
 	}
 	current := ""
 	if order.EcomStatus != nil {
@@ -883,7 +905,7 @@ func (s *EcomAdminOrdersService) CreateBiteshipShipment(orderID, changedBy strin
 		ReferenceID:        orderID, // supaya webhook bisa lookup order kita
 	}
 
-	resp, err := s.shippingClient().CreateOrder(req)
+	resp, err := s.shippingClient(tempat).CreateOrder(req)
 	if err != nil {
 		s.Log.Error().Err(err).Str("order_id", orderID).Msg("biteship create order failed")
 		return nil, &dto.ApiError{StatusCode: fiber.ErrBadGateway, Message: "Gagal buat order Biteship: " + err.Error()}
@@ -1053,14 +1075,14 @@ func (s *EcomAdminOrdersService) SyncBiteshipStatus(orderID, changedBy string) (
 	// tracking_id — mis. pre-migration 000062 atau webhook belum fire.
 	var tracking *biteship.TrackingStatus
 	if order.ShippingTrackingID != nil && *order.ShippingTrackingID != "" {
-		t, err := s.shippingClient().GetTracking(*order.ShippingTrackingID)
+		t, err := s.shippingClient(TempatDariOrderSource(order.OrderSource)).GetTracking(*order.ShippingTrackingID)
 		if err != nil {
 			s.Log.Error().Err(err).Str("order_id", orderID).Msg("biteship sync GetTracking failed")
 			return nil, &dto.ApiError{StatusCode: fiber.ErrBadGateway, Message: "Gagal ambil tracking dari Biteship: " + err.Error()}
 		}
 		tracking = t
 	} else {
-		t, err := s.shippingClient().GetOrder(*order.BiteshipOrderID)
+		t, err := s.shippingClient(TempatDariOrderSource(order.OrderSource)).GetOrder(*order.BiteshipOrderID)
 		if err != nil {
 			s.Log.Error().Err(err).Str("order_id", orderID).Msg("biteship sync GetOrder failed")
 			return nil, &dto.ApiError{StatusCode: fiber.ErrBadGateway, Message: "Gagal ambil status dari Biteship: " + err.Error()}

@@ -1,78 +1,82 @@
 package entity
 
 import (
-	"time"
 	"gorm.io/gorm"
+	"time"
 )
 
 type Order struct {
-	ID                 string         `gorm:"type:varchar(36);primary_key;not null" json:"id"`
-	Items              []OrderItem    `gorm:"foreignKey:OrderID" json:"items,omitempty"`
-	Payments           []OrderPayment `gorm:"foreignKey:OrderID" json:"payments,omitempty"`
-	Subtotal           float64        `gorm:"type:decimal(15,2);not null;default:0" json:"subtotal"`
-	PPNRate            float64        `gorm:"column:ppn_rate;type:decimal(5,2);not null;default:11" json:"ppn_rate"`
-	PPN                float64        `gorm:"type:decimal(15,2);not null;default:0" json:"ppn"`
-	Total              float64        `gorm:"type:decimal(15,2);not null;default:0" json:"total"`
-	Payment            string         `gorm:"type:varchar(20);not null;default:'cash'" json:"payment"`
+	ID       string         `gorm:"type:varchar(36);primary_key;not null" json:"id"`
+	Items    []OrderItem    `gorm:"foreignKey:OrderID" json:"items,omitempty"`
+	Payments []OrderPayment `gorm:"foreignKey:OrderID" json:"payments,omitempty"`
+	Subtotal float64        `gorm:"type:decimal(15,2);not null;default:0" json:"subtotal"`
+	PPNRate  float64        `gorm:"column:ppn_rate;type:decimal(5,2);not null;default:11" json:"ppn_rate"`
+	PPN      float64        `gorm:"type:decimal(15,2);not null;default:0" json:"ppn"`
+	Total    float64        `gorm:"type:decimal(15,2);not null;default:0" json:"total"`
+	Payment  string         `gorm:"type:varchar(20);not null;default:'cash'" json:"payment"`
 	// Payment edit audit inline (migration 000045). Kalau NULL berarti order
 	// tidak pernah di-edit metode bayar-nya. Detail action tetap ke audit_log.
 	PaymentsEditedAt     *time.Time `gorm:"column:payments_edited_at;type:datetime;null" json:"payments_edited_at,omitempty"`
 	PaymentsEditedBy     *string    `gorm:"column:payments_edited_by;type:varchar(36);null" json:"payments_edited_by,omitempty"`
 	PaymentsEditedReason *string    `gorm:"column:payments_edited_reason;type:varchar(500);null" json:"payments_edited_reason,omitempty"`
-	Status             string         `gorm:"type:varchar(20);not null;default:'completed'" json:"status"`
-	Customer           string         `gorm:"type:varchar(200);null" json:"customer,omitempty"`
-	CustomerPhone      string         `gorm:"type:varchar(20);null" json:"customer_phone,omitempty"`
-	MemberID           *string        `gorm:"type:varchar(36);null;index" json:"member_id,omitempty"`
-	Member             *Member        `gorm:"foreignKey:MemberID" json:"member,omitempty"`
-	PaymentProof       string         `gorm:"type:text;null" json:"payment_proof,omitempty"`
-	OrderDiscountType  string         `gorm:"type:varchar(20);null" json:"order_discount_type,omitempty"`
-	OrderDiscountValue float64        `gorm:"type:decimal(15,2);null;default:0" json:"order_discount_value"`
-	OrderDiscount      float64        `gorm:"type:decimal(15,2);null;default:0" json:"order_discount"`
-	CreatedBy          string         `gorm:"type:varchar(36);not null" json:"created_by"`
+	Status               string     `gorm:"type:varchar(20);not null;default:'completed'" json:"status"`
+	Customer             string     `gorm:"type:varchar(200);null" json:"customer,omitempty"`
+	CustomerPhone        string     `gorm:"type:varchar(20);null" json:"customer_phone,omitempty"`
+	MemberID             *string    `gorm:"type:varchar(36);null;index" json:"member_id,omitempty"`
+	Member               *Member    `gorm:"foreignKey:MemberID" json:"member,omitempty"`
+	PaymentProof         string     `gorm:"type:text;null" json:"payment_proof,omitempty"`
+	OrderDiscountType    string     `gorm:"type:varchar(20);null" json:"order_discount_type,omitempty"`
+	OrderDiscountValue   float64    `gorm:"type:decimal(15,2);null;default:0" json:"order_discount_value"`
+	OrderDiscount        float64    `gorm:"type:decimal(15,2);null;default:0" json:"order_discount"`
+	CreatedBy            string     `gorm:"type:varchar(36);not null" json:"created_by"`
 	// Ecom fields (migration 000051, Bu Santi 24 Jul 2026). Semua NULL untuk
 	// order POS existing.
-	OrderSource             string     `gorm:"column:order_source;type:varchar(10);not null;default:pos" json:"order_source"`
-	EcomUserID              *string    `gorm:"column:ecom_user_id;type:varchar(36);null" json:"ecom_user_id,omitempty"`
-	ShippingAddressSnapshot *string    `gorm:"column:shipping_address_snapshot;type:json;null" json:"shipping_address_snapshot,omitempty"`
+	OrderSource string `gorm:"column:order_source;type:varchar(10);not null;default:pos" json:"order_source"`
+	// CheckoutGroupID — pesanan yang lahir dari satu kali checkout. Keranjang
+	// berisi dua toko menghasilkan dua pesanan dengan group id yang sama,
+	// dibayar sekali. NULL untuk pesanan POS dan semua pesanan lama.
+	CheckoutGroupID         *string `gorm:"column:checkout_group_id;type:varchar(36);null;index" json:"checkout_group_id,omitempty"`
+	EcomUserID              *string `gorm:"column:ecom_user_id;type:varchar(36);null" json:"ecom_user_id,omitempty"`
+	ShippingAddressSnapshot *string `gorm:"column:shipping_address_snapshot;type:json;null" json:"shipping_address_snapshot,omitempty"`
 	// ShippingCourier = CODE Biteship (mis. "sicepat", "jnt", "jne"). Sejak
 	// migration 000061 (28 Jul 2026) — sebelumnya isi display name yang bikin
 	// CreateBiteshipShipment reject. Display name pindah ke ShippingCourierName.
-	ShippingCourier         *string    `gorm:"column:shipping_courier;type:varchar(50);null" json:"shipping_courier,omitempty"`
-	ShippingCourierName     *string    `gorm:"column:shipping_courier_name;type:varchar(100);null" json:"shipping_courier_name,omitempty"`
+	ShippingCourier     *string `gorm:"column:shipping_courier;type:varchar(50);null" json:"shipping_courier,omitempty"`
+	ShippingCourierName *string `gorm:"column:shipping_courier_name;type:varchar(100);null" json:"shipping_courier_name,omitempty"`
 	// ShippingService = CODE Biteship (mis. "reg", "yes"). Display di *_name.
-	ShippingService         *string    `gorm:"column:shipping_service;type:varchar(50);null" json:"shipping_service,omitempty"`
-	ShippingServiceName     *string    `gorm:"column:shipping_service_name;type:varchar(100);null" json:"shipping_service_name,omitempty"`
-	ShippingCost            float64    `gorm:"column:shipping_cost;type:decimal(15,2);null;default:0" json:"shipping_cost,omitempty"`
-	VoucherCode             *string    `gorm:"column:voucher_code;type:varchar(50);null" json:"voucher_code,omitempty"`
-	VoucherDiscount         float64    `gorm:"column:voucher_discount;type:decimal(15,2);not null;default:0" json:"voucher_discount,omitempty"`
-	ShippingETD             *string    `gorm:"column:shipping_etd;type:varchar(50);null" json:"shipping_etd,omitempty"`
-	ShippingAWB             *string    `gorm:"column:shipping_awb;type:varchar(100);null" json:"shipping_awb,omitempty"`
+	ShippingService     *string `gorm:"column:shipping_service;type:varchar(50);null" json:"shipping_service,omitempty"`
+	ShippingServiceName *string `gorm:"column:shipping_service_name;type:varchar(100);null" json:"shipping_service_name,omitempty"`
+	ShippingCost        float64 `gorm:"column:shipping_cost;type:decimal(15,2);null;default:0" json:"shipping_cost,omitempty"`
+	VoucherCode         *string `gorm:"column:voucher_code;type:varchar(50);null" json:"voucher_code,omitempty"`
+	VoucherDiscount     float64 `gorm:"column:voucher_discount;type:decimal(15,2);not null;default:0" json:"voucher_discount,omitempty"`
+	ShippingETD         *string `gorm:"column:shipping_etd;type:varchar(50);null" json:"shipping_etd,omitempty"`
+	ShippingAWB         *string `gorm:"column:shipping_awb;type:varchar(100);null" json:"shipping_awb,omitempty"`
 	// Public tracking URL dari Biteship (courier.link di response). Customer
 	// klik langsung buka page tracking kurir tanpa copy AWB manual.
-	ShippingTrackingURL     *string    `gorm:"column:shipping_tracking_url;type:varchar(500);null" json:"shipping_tracking_url,omitempty"`
+	ShippingTrackingURL *string `gorm:"column:shipping_tracking_url;type:varchar(500);null" json:"shipping_tracking_url,omitempty"`
 	// Biteship internal tracking_id — dipakai GET /v1/trackings/:id untuk
 	// manual sync kalau webhook missed.
-	ShippingTrackingID      *string    `gorm:"column:shipping_tracking_id;type:varchar(64);null" json:"shipping_tracking_id,omitempty"`
-	BiteshipOrderID         *string    `gorm:"column:biteship_order_id;type:varchar(64);null" json:"biteship_order_id,omitempty"`
-	EcomStatus              *string    `gorm:"column:ecom_status;type:varchar(30);null" json:"ecom_status,omitempty"`
+	ShippingTrackingID *string `gorm:"column:shipping_tracking_id;type:varchar(64);null" json:"shipping_tracking_id,omitempty"`
+	BiteshipOrderID    *string `gorm:"column:biteship_order_id;type:varchar(64);null" json:"biteship_order_id,omitempty"`
+	EcomStatus         *string `gorm:"column:ecom_status;type:varchar(30);null" json:"ecom_status,omitempty"`
 	// Waktu Biteship (atau admin manual) tandai "sudah sampai kurir".
 	// Bukan waktu customer konfirmasi terima — itu tetap pakai UpdatedAt saat
 	// transisi delivered → completed. Dipakai cron auto-complete 7 hari.
-	EcomDeliveredAt         *time.Time `gorm:"column:ecom_delivered_at;type:datetime;null" json:"ecom_delivered_at,omitempty"`
-	PaymentSnapToken        *string    `gorm:"column:payment_snap_token;type:varchar(100);null" json:"payment_snap_token,omitempty"`
+	EcomDeliveredAt  *time.Time `gorm:"column:ecom_delivered_at;type:datetime;null" json:"ecom_delivered_at,omitempty"`
+	PaymentSnapToken *string    `gorm:"column:payment_snap_token;type:varchar(100);null" json:"payment_snap_token,omitempty"`
 	// Payment Gateway DOKU (28 Jul 2026). PaymentSnapToken di-deprecate untuk
 	// order ecom baru — semua checkout ke PGWrapper via internal/infrastructure/pg.
 	// PaymentURL = DOKU checkout link yang customer buka. Channel/Category
 	// snapshot pilihan customer (bca/qris/dst).
-	PaymentURL             *string    `gorm:"column:payment_url;type:varchar(500);null" json:"payment_url,omitempty"`
-	PaymentChannel         *string    `gorm:"column:payment_channel;type:varchar(20);null" json:"payment_channel,omitempty"`
-	PaymentChannelCategory *string    `gorm:"column:payment_channel_category;type:varchar(30);null" json:"payment_channel_category,omitempty"`
-	PaymentReference        *string    `gorm:"column:payment_reference;type:varchar(100);null" json:"payment_reference,omitempty"`
-	PaymentPaidAt           *time.Time `gorm:"column:payment_paid_at;type:datetime;null" json:"payment_paid_at,omitempty"`
-	PaymentExpiredAt        *time.Time `gorm:"column:payment_expired_at;type:datetime;null" json:"payment_expired_at,omitempty"`
-	CreatedAt          time.Time      `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
-	UpdatedAt          time.Time      `gorm:"default:current_timestamp()" json:"updated_at,omitempty"`
-	DeletedAt          gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
+	PaymentURL             *string        `gorm:"column:payment_url;type:varchar(500);null" json:"payment_url,omitempty"`
+	PaymentChannel         *string        `gorm:"column:payment_channel;type:varchar(20);null" json:"payment_channel,omitempty"`
+	PaymentChannelCategory *string        `gorm:"column:payment_channel_category;type:varchar(30);null" json:"payment_channel_category,omitempty"`
+	PaymentReference       *string        `gorm:"column:payment_reference;type:varchar(100);null" json:"payment_reference,omitempty"`
+	PaymentPaidAt          *time.Time     `gorm:"column:payment_paid_at;type:datetime;null" json:"payment_paid_at,omitempty"`
+	PaymentExpiredAt       *time.Time     `gorm:"column:payment_expired_at;type:datetime;null" json:"payment_expired_at,omitempty"`
+	CreatedAt              time.Time      `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
+	UpdatedAt              time.Time      `gorm:"default:current_timestamp()" json:"updated_at,omitempty"`
+	DeletedAt              gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
 }
 
 func (Order) TableName() string { return "orders" }
@@ -85,16 +89,16 @@ type OrderItem struct {
 	ProductID string `gorm:"type:varchar(36);null" json:"product_id"`
 	// RedeemableItemID nullable FK ke redeemable_items. ON DELETE SET NULL
 	// supaya delete item tebus tidak hilang history order. Lihat migration 000041.
-	RedeemableItemID *string `gorm:"column:redeemable_item_id;type:varchar(36);null" json:"redeemable_item_id,omitempty"`
-	Name           string    `gorm:"type:varchar(200);not null" json:"name"`
-	Quantity       int       `gorm:"type:int;not null;default:1" json:"quantity"`
-	UnitType       string    `gorm:"type:varchar(20);not null;default:'individual'" json:"unit_type"`
-	UnitPrice      float64   `gorm:"type:decimal(15,2);not null;default:0" json:"unit_price"`
-	PurchasePrice  float64   `gorm:"type:decimal(15,2);null" json:"purchase_price,omitempty"`
-	RegularPrice   *float64  `gorm:"type:decimal(15,2);null" json:"regular_price,omitempty"`
-	DiscountType   string    `gorm:"type:varchar(20);null" json:"discount_type,omitempty"`
-	DiscountValue  float64   `gorm:"type:decimal(15,2);null;default:0" json:"discount_value"`
-	DiscountAmount float64   `gorm:"type:decimal(15,2);null;default:0" json:"discount_amount"`
+	RedeemableItemID *string  `gorm:"column:redeemable_item_id;type:varchar(36);null" json:"redeemable_item_id,omitempty"`
+	Name             string   `gorm:"type:varchar(200);not null" json:"name"`
+	Quantity         int      `gorm:"type:int;not null;default:1" json:"quantity"`
+	UnitType         string   `gorm:"type:varchar(20);not null;default:'individual'" json:"unit_type"`
+	UnitPrice        float64  `gorm:"type:decimal(15,2);not null;default:0" json:"unit_price"`
+	PurchasePrice    float64  `gorm:"type:decimal(15,2);null" json:"purchase_price,omitempty"`
+	RegularPrice     *float64 `gorm:"type:decimal(15,2);null" json:"regular_price,omitempty"`
+	DiscountType     string   `gorm:"type:varchar(20);null" json:"discount_type,omitempty"`
+	DiscountValue    float64  `gorm:"type:decimal(15,2);null;default:0" json:"discount_value"`
+	DiscountAmount   float64  `gorm:"type:decimal(15,2);null;default:0" json:"discount_amount"`
 	// RedeemedWithPoints: true kalau item ini dibayar pakai member.points
 	// (tebus barang). Harga item tidak masuk hitungan cash actual untuk
 	// earn poin baru — cegah loop (tebus pakai poin lalu dapat poin lagi).

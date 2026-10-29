@@ -47,13 +47,17 @@ func (r *ProductPriceTierRepository) Create(tier *entity.ProductPriceTier) error
 // Caller passes the desired final list in tier.Members.
 func (r *ProductPriceTierRepository) Update(tier *entity.ProductPriceTier) error {
 	return r.DB.Transaction(func(tx *gorm.DB) error {
-		// Update scalar fields first. expires_at di-update walaupun NULL —
-		// admin bisa change dari "1 hari" ke "tidak terbatas" (NULL).
+		// Update scalar fields first. starts_at/expires_at di-update walaupun
+		// NULL — admin bisa mengubah promo berjadwal kembali jadi "berlaku
+		// terus". Keduanya WAJIB ada di map ini: kolom yang tidak disebut
+		// tidak ikut tersimpan, dan jadwal yang diam-diam hilang saat edit
+		// adalah bentuk kegagalan yang baru ketahuan setelah promonya lewat.
 		if err := tx.Model(&entity.ProductPriceTier{}).Where("id = ?", tier.ID).Updates(map[string]interface{}{
 			"min_qty":     tier.MinQty,
 			"price":       tier.Price,
 			"target_type": tier.TargetType,
 			"note":        tier.Note,
+			"starts_at":   tier.StartsAt,
 			"expires_at":  tier.ExpiresAt,
 		}).Error; err != nil {
 			return err

@@ -28,8 +28,8 @@ type MemberResponse struct {
 type MemberPointMovementResponse struct {
 	ID           string  `json:"id"`
 	OrderID      *string `json:"order_id,omitempty"`
-	Type         string  `json:"type"`           // 'earn' | 'redeem-item' | 'expire-reset' | 'adjust'
-	Points       int     `json:"points"`         // signed
+	Type         string  `json:"type"`   // 'earn' | 'redeem-item' | 'expire-reset' | 'adjust'
+	Points       int     `json:"points"` // signed
 	BalanceAfter int     `json:"balance_after"`
 	Note         string  `json:"note,omitempty"`
 	CreatedBy    *string `json:"created_by,omitempty"`
@@ -118,6 +118,7 @@ type UpdateSettingsRequest struct {
 	StoreName    string  `json:"store_name"`
 	StoreAddress string  `json:"store_address"`
 	StorePhone   string  `json:"store_phone"`
+	BrandColor   *string `json:"brand_color,omitempty" validate:"omitempty,oneof=biru hijau ungu jingga"`
 	PPNRate      float64 `json:"ppn_rate"`
 	LabelWidth   int     `json:"label_width"`
 	LabelHeight  int     `json:"label_height"`
@@ -134,6 +135,7 @@ type AddBankAccountRequest struct {
 
 type SettingsResponse struct {
 	ID           string                `json:"id"`
+	BrandColor   *string               `json:"brand_color,omitempty"`
 	StoreName    string                `json:"store_name"`
 	StoreAddress string                `json:"store_address,omitempty"`
 	StorePhone   string                `json:"store_phone,omitempty"`
@@ -152,11 +154,11 @@ type BankAccountResponse struct {
 }
 
 type DashboardResponse struct {
-	Revenue      float64              `json:"revenue"`
-	OrderCount   int64                `json:"order_count"`
-	ProductCount int64                `json:"product_count"`
-	LowStockCount int64              `json:"low_stock_count"`
-	RecentOrders []OrderResponse      `json:"recent_orders,omitempty"`
-	LowStockItems []ProductResponse   `json:"low_stock_items,omitempty"`
+	Revenue         float64              `json:"revenue"`
+	OrderCount      int64                `json:"order_count"`
+	ProductCount    int64                `json:"product_count"`
+	LowStockCount   int64                `json:"low_stock_count"`
+	RecentOrders    []OrderResponse      `json:"recent_orders,omitempty"`
+	LowStockItems   []ProductResponse    `json:"low_stock_items,omitempty"`
 	ExpiringBatches []StockBatchResponse `json:"expiring_batches,omitempty"`
 }

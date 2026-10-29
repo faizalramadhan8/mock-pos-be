@@ -3,12 +3,13 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
-	"github.com/gofiber/fiber/v2"
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
 	"github.com/faizalramadhan/pos-be/internal/application/usecase"
 	"github.com/faizalramadhan/pos-be/internal/domain/entity"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
+	"github.com/gofiber/fiber/v2"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
 )
@@ -39,7 +40,9 @@ func NewEcomPublicController(ctx context.Context) *EcomPublicController {
 // Sprint 4 Chunk 5 (31 Jul 2026). Hide payment toggle + email + area_id.
 // Sprint 5 Chunk 7 (2 Aug 2026) — Homepage CMS fields ditambah.
 func (ctrl *EcomPublicController) PublicSettings(c *fiber.Ctx) error {
-	s, fail := ctrl.SettingsSvc.Get()
+	// ?location=home|store — storefront melayani dua toko. Tanpa parameter
+	// tetap rumah, jadi halaman lama yang belum mengirimnya tidak berubah.
+	s, fail := ctrl.SettingsSvc.Get(c.Query("location"))
 	if fail != nil {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
 	}
@@ -73,19 +76,20 @@ func (ctrl *EcomPublicController) PublicSettings(c *fiber.Ctx) error {
 	}
 
 	body := fiber.Map{
-		"min_order_amount":              s.MinOrderAmount,
-		"wa_contact_number":             s.WAContactNumber,
-		"wa_pretext":                    s.WAPretext,
-		"announcement_bar_enabled":      s.AnnouncementBarEnabled,
-		"announcement_bar_text":         s.AnnouncementBarText,
-		"announcement_bar_cta_label":    s.AnnouncementBarCtaLabel,
-		"announcement_bar_cta_url":      s.AnnouncementBarCtaURL,
-		"store_name":                    s.StoreName,
+		"min_order_amount":           s.MinOrderAmount,
+		"wa_contact_number":          s.WAContactNumber,
+		"wa_pretext":                 s.WAPretext,
+		"announcement_bar_enabled":   s.AnnouncementBarEnabled,
+		"announcement_bar_text":      s.AnnouncementBarText,
+		"announcement_bar_cta_label": s.AnnouncementBarCtaLabel,
+		"announcement_bar_cta_url":   s.AnnouncementBarCtaURL,
+		"store_name":                 s.StoreName,
 		// Logo ikut di subset publik — dipakai header storefront. Aman
 		// ditampilkan ke siapa pun; isinya memang untuk dilihat customer.
-		"store_logo":                    s.StoreLogo,
-		"payment_pg_enabled":            s.PaymentPgEnabled,
-		"payment_manual_enabled":        s.PaymentManualEnabled,
+		"store_logo":             s.StoreLogo,
+		"brand_color":            s.BrandColor,
+		"payment_pg_enabled":     s.PaymentPgEnabled,
+		"payment_manual_enabled": s.PaymentManualEnabled,
 		// Rekening tujuan transfer manual. Tanpa ini customer tidak punya
 		// cara membayar sama sekali: halaman pesanan cuma bisa menulis
 		// "transfer ke rekening toko" tanpa menyebut rekening yang mana.
@@ -96,19 +100,21 @@ func (ctrl *EcomPublicController) PublicSettings(c *fiber.Ctx) error {
 		// pembeli. Yang TIDAK boleh ikut cuma kredensial/kunci API.
 		"bank_accounts": bankAccounts,
 		// Sprint 5 Chunk 7 — Homepage CMS.
-		"hero_kicker":            s.HeroKicker,
-		"hero_title":             s.HeroTitle,
-		"hero_subtitle":          s.HeroSubtitle,
-		"hero_cta_label":         s.HeroCtaLabel,
-		"hero_cta_url":           s.HeroCtaURL,
-		"pinned_product_ids":     pinnedIDs,
-		"featured_category_ids":  featuredCatIDs,
+		"hero_kicker":           s.HeroKicker,
+		"hero_title":            s.HeroTitle,
+		"hero_subtitle":         s.HeroSubtitle,
+		"hero_cta_label":        s.HeroCtaLabel,
+		"hero_cta_url":          s.HeroCtaURL,
+		"pinned_product_ids":    pinnedIDs,
+		"featured_category_ids": featuredCatIDs,
 	}
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK", Body: body})
 }
 
 func (ctrl *EcomPublicController) ListCategories(c *fiber.Ctx) error {
-	items, fail := ctrl.Service.ListCategories()
+	// ?location=home|store — kosong berarti hitung lintas toko. Beranda
+	// mengirimnya kosong; halaman toko mengirimkan tokonya.
+	items, fail := ctrl.Service.ListCategories(c.Query("location"))
 	if fail != nil {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
 			Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message,
@@ -135,6 +141,10 @@ func (ctrl *EcomPublicController) ListProducts(c *fiber.Ctx) error {
 	filter := usecase.ListProductsFilter{
 		MinPrice: parseFloatQuery(c, "min_price"),
 		MaxPrice: parseFloatQuery(c, "max_price"),
+		// ?location kosong = semua toko. Sengaja TIDAK dinormalkan di sini:
+		// TempatSah() mengubah string kosong jadi "home", dan itu justru
+		// mengembalikan storefront ke perilaku satu toko.
+		Location: strings.TrimSpace(c.Query("location")),
 	}
 
 	resp, fail := ctrl.Service.ListProductsFiltered(category, search, sort, cursor, limit, filter)

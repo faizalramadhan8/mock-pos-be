@@ -5,9 +5,10 @@
 //
 // Docs: postman collection Payment Gateway v2 - DOKU (root repo).
 // Endpoints:
-//   GET  {base}/payment/api/v1/channels          — public, list channels
-//   POST {base}/payment/api/v1/pay/direct        — Basic Auth, create payment
-//   GET  {base}/payment/api/v1/pay/status?trxId= — Basic Auth, check status
+//
+//	GET  {base}/payment/api/v1/channels          — public, list channels
+//	POST {base}/payment/api/v1/pay/direct        — Basic Auth, create payment
+//	GET  {base}/payment/api/v1/pay/status?trxId= — Basic Auth, check status
 //
 // Webhook (DOKU notification) datang dengan payload berbeda dari Midtrans,
 // lihat WebhookPayload di file ini + handler-nya di ecom_checkout_handler.go.
@@ -60,19 +61,19 @@ type CreatePaymentItem struct {
 }
 
 type CreatePaymentRequest struct {
-	Channel        string              `json:"channel"`        // bca/bri/bni/mandiri/cimb/permata/qris/ovo/shopeepay/dana/credit_card
+	Channel        string              `json:"channel"` // bca/bri/bni/mandiri/cimb/permata/qris/ovo/shopeepay/dana/credit_card
 	TotalAmount    float64             `json:"total_amount"`
-	TrxID          string              `json:"trx_id"`         // = order.id (kita reuse UUID)
+	TrxID          string              `json:"trx_id"` // = order.id (kita reuse UUID)
 	BillingEmail   string              `json:"billing_email"`
 	BillingName    string              `json:"billing_name"`
 	BillingPhone   string              `json:"billing_phone"`
 	BillingAddress string              `json:"billing_address"`
 	BillingID      string              `json:"billing_id,omitempty"`
 	BillingUID     string              `json:"billing_uid,omitempty"`
-	CallbackURL    string              `json:"callback_url"`   // webhook BE kita
-	SuccessURL     string              `json:"success_url"`    // redirect FE setelah bayar
+	CallbackURL    string              `json:"callback_url"` // webhook BE kita
+	SuccessURL     string              `json:"success_url"`  // redirect FE setelah bayar
 	Description    string              `json:"description"`
-	Merchant       string              `json:"merchant"`       // samaran per Bu Santi request
+	Merchant       string              `json:"merchant"` // samaran per Bu Santi request
 	Remark         string              `json:"remark"`
 	Item           []CreatePaymentItem `json:"item"`
 }
@@ -108,14 +109,14 @@ func (c *Client) CreatePayment(ctx context.Context, req CreatePaymentRequest) (*
 		// Stub — return fake payment_url untuk dev mode. FE branch: kalau URL
 		// dimulai "stub-" tampil "Sedang menunggu konfirmasi" state.
 		return &CreatePaymentResponse{
-			PaymentID:     "stub-" + req.TrxID,
-			RefNo:         req.TrxID,
-			Amount:        req.TotalAmount,
-			Currency:      "IDR",
+			PaymentID:      "stub-" + req.TrxID,
+			RefNo:          req.TrxID,
+			Amount:         req.TotalAmount,
+			Currency:       "IDR",
 			PaymentChannel: req.Channel,
-			PaymentCode:   req.Channel,
-			PaymentStatus: "UNPAID",
-			PaymentURL:    "stub-" + req.TrxID,
+			PaymentCode:    req.Channel,
+			PaymentStatus:  "UNPAID",
+			PaymentURL:     "stub-" + req.TrxID,
 		}, nil
 	}
 

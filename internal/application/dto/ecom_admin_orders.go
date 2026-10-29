@@ -13,6 +13,12 @@ type EcomAdminOrderListItem struct {
 	AWB           string  `json:"awb,omitempty"`
 	CreatedAt     string  `json:"created_at"`
 	PaymentMethod string  `json:"payment_method,omitempty"`
+	// Toko asal pesanan. Di daftar Gabungan, dua pesanan terlihat sama persis
+	// tanpa ini — dan yang menentukan paketnya dijemput di mana adalah ini.
+	Location  string `json:"location"`
+	StoreName string `json:"store_name,omitempty"`
+	// Terisi kalau pesanan ini satu pembayaran dengan pesanan lain.
+	CheckoutGroupID string `json:"checkout_group_id,omitempty"`
 }
 
 // EcomAdminOrderListResponse — list + cursor + count summary per status

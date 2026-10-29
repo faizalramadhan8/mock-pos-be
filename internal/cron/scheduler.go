@@ -6,28 +6,28 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/faizalramadhan/pos-be/internal/application/usecase"
 	"github.com/faizalramadhan/pos-be/internal/domain/entity"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
 	"github.com/faizalramadhan/pos-be/internal/domain/repository"
 	"github.com/faizalramadhan/pos-be/internal/infrastructure/whatsapp"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
 )
 
 type Scheduler struct {
-	Log              *zerolog.Logger
-	DB               *gorm.DB
-	PushService      *usecase.PushService
-	ProductRepo      *repository.ProductRepository
-	BatchRepo        *repository.StockBatchRepository
-	MoveRepo         *repository.StockMovementRepository
-	PurchaseInvRepo  *repository.PurchaseInvoiceRepository
-	AuthRepo         *repository.AuthRepository
-	MemberRepo       *repository.MemberRepository
-	PointMoveRepo    *repository.MemberPointMovementRepository
-	WA               *whatsapp.Service
+	Log             *zerolog.Logger
+	DB              *gorm.DB
+	PushService     *usecase.PushService
+	ProductRepo     *repository.ProductRepository
+	BatchRepo       *repository.StockBatchRepository
+	MoveRepo        *repository.StockMovementRepository
+	PurchaseInvRepo *repository.PurchaseInvoiceRepository
+	AuthRepo        *repository.AuthRepository
+	MemberRepo      *repository.MemberRepository
+	PointMoveRepo   *repository.MemberPointMovementRepository
+	WA              *whatsapp.Service
 }
 
 func NewScheduler(ctx context.Context, db *gorm.DB) *Scheduler {
@@ -200,7 +200,7 @@ func (s *Scheduler) runEcomExpireUnpaid() {
 					Type:      "in",
 					Quantity:  it.Quantity,
 					UnitType:  "individual",
-					Location:  "home",
+					Location:  usecase.TempatProduk(tx, it.ProductID),
 					UnitPrice: it.UnitPrice,
 					Reason:    "cancel",
 					Note:      fmt.Sprintf("Pesanan online kedaluwarsa, tidak dibayar (Order #%s)", o.ID[:8]),

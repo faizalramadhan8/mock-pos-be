@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
+	"github.com/gofiber/fiber/v2"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
 )
@@ -25,7 +25,9 @@ func NewEcomAdminAnalyticsService(ctx context.Context, db *gorm.DB) *EcomAdminAn
 }
 
 // Get — semua metrik dalam 1 request, cegah round-trip. Range = 30 hari default.
-func (s *EcomAdminAnalyticsService) Get() (*dto.EcomAdminAnalytics, *dto.ApiError) {
+// Get — `location` kosong = Gabungan, "home"/"store" = satu toko.
+func (s *EcomAdminAnalyticsService) Get(location string) (*dto.EcomAdminAnalytics, *dto.ApiError) {
+	sumber := SumberPesananTempat(location)
 	loc, _ := time.LoadLocation("Asia/Jakarta")
 	now := time.Now().In(loc)
 	// Range 30 hari — from 00:00 hari ke-30 lalu, to 23:59 hari ini.
@@ -55,7 +57,7 @@ func (s *EcomAdminAnalyticsService) Get() (*dto.EcomAdminAnalytics, *dto.ApiErro
 	}{}
 	s.DB.Table("orders").
 		Select("DATE_FORMAT(created_at, '%Y-%m-%d') AS day, SUM(total) AS revenue, COUNT(*) AS orders").
-		Where("order_source IN ('ecom','home') AND deleted_at IS NULL AND status = 'completed' AND created_at >= ? AND created_at < ?", from, to).
+		Where("order_source IN ? AND deleted_at IS NULL AND status = 'completed' AND created_at >= ? AND created_at < ?", sumber, from, to).
 		Group("day").
 		Scan(&dailyRows)
 	dayIdx := make(map[string]int, 30)
@@ -79,7 +81,7 @@ func (s *EcomAdminAnalyticsService) Get() (*dto.EcomAdminAnalytics, *dto.ApiErro
 	funnelRows := []funnelRow{}
 	s.DB.Table("orders").
 		Select("COALESCE(ecom_status, status) AS status, COUNT(*) AS count").
-		Where("order_source IN ('ecom','home') AND deleted_at IS NULL AND created_at >= ? AND created_at < ?", from, to).
+		Where("order_source IN ? AND deleted_at IS NULL AND created_at >= ? AND created_at < ?", sumber, from, to).
 		Group("status").Scan(&funnelRows)
 	funnel := map[string]int{}
 	for _, r := range funnelRows {
@@ -95,7 +97,7 @@ func (s *EcomAdminAnalyticsService) Get() (*dto.EcomAdminAnalytics, *dto.ApiErro
 		AvgOrderValue  float64
 	}{}
 	s.DB.Table("orders").
-		Where("order_source IN ('ecom','home') AND deleted_at IS NULL AND created_at >= ? AND created_at < ?", from, to).
+		Where("order_source IN ? AND deleted_at IS NULL AND created_at >= ? AND created_at < ?", sumber, from, to).
 		Select(`COUNT(*) AS total_orders,
 			SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed_count,
 			COALESCE(SUM(CASE WHEN status = 'completed' THEN total ELSE 0 END), 0) AS total_revenue,
@@ -124,7 +126,7 @@ func (s *EcomAdminAnalyticsService) Get() (*dto.EcomAdminAnalytics, *dto.ApiErro
 	s.DB.Table("order_payments op").
 		Joins("JOIN orders o ON o.id = op.order_id").
 		Select("op.method AS method, COUNT(*) AS count, COALESCE(SUM(op.amount), 0) AS amount").
-		Where("o.order_source IN ('ecom','home') AND o.deleted_at IS NULL AND o.status = 'completed' AND o.created_at >= ? AND o.created_at < ?", from, to).
+		Where("o.order_source IN ? AND o.deleted_at IS NULL AND o.status = 'completed' AND o.created_at >= ? AND o.created_at < ?", sumber, from, to).
 		Group("op.method").Scan(&channelRows)
 	channels := make([]dto.AnalyticsChannelSlice, 0, len(channelRows))
 	for _, r := range channelRows {

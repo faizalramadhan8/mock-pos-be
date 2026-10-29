@@ -104,6 +104,10 @@ func (s *EcomOrdersService) List(userID string) ([]dto.CustomerOrderListItem, *d
 			ItemCount:  len(o.Items),
 			FirstItem:  firstItem,
 			CreatedAt:  o.CreatedAt.Format(time.RFC3339),
+			StoreName:  NamaToko(s.DB, TempatDariOrderSource(o.OrderSource)),
+		}
+		if o.CheckoutGroupID != nil && *o.CheckoutGroupID != "" {
+			row.CheckoutGroupID = *o.CheckoutGroupID
 		}
 		if o.PaymentPaidAt != nil {
 			s := o.PaymentPaidAt.Format(time.RFC3339)
@@ -163,7 +167,7 @@ func (s *EcomOrdersService) CancelPending(userID, orderID string) (*dto.Customer
 			Type:      "in",
 			Quantity:  it.Quantity,
 			UnitType:  "individual",
-			Location:  "home",
+			Location:  TempatProduk(tx, it.ProductID),
 			UnitPrice: it.UnitPrice,
 			Reason:    "cancel",
 			Note:      fmt.Sprintf("Pesanan online dibatalkan customer (Order #%s)", orderID[:8]),
@@ -224,8 +228,21 @@ func (s *EcomOrdersService) SubmitPaymentProof(userID, orderID, proofURL string)
 		}
 	}
 
-	if err := s.DB.Model(&entity.Order{}).Where("id = ?", orderID).
-		Update("payment_proof", proofURL).Error; err != nil {
+	// Satu transfer menutup SEMUA pesanan dari satu kali checkout: keranjang
+	// berisi dua toko menghasilkan dua pesanan, tapi customer hanya mentransfer
+	// sekali. Jadi buktinya ditautkan ke seluruh grup — kalau hanya ke satu
+	// pesanan, pesanan satunya terlihat belum dibayar dan akan dibatalkan cron
+	// expire-unpaid padahal uangnya sudah masuk.
+	//
+	// Pesanan grup yang sudah tidak `pending_payment` tidak ikut ditimpa:
+	// bukti baru tidak boleh mengubah apa yang sudah dikonfirmasi admin.
+	q := s.DB.Model(&entity.Order{}).Where("ecom_status = ?", "pending_payment")
+	if order.CheckoutGroupID != nil && *order.CheckoutGroupID != "" {
+		q = q.Where("checkout_group_id = ? AND ecom_user_id = ?", *order.CheckoutGroupID, userID)
+	} else {
+		q = q.Where("id = ?", orderID)
+	}
+	if err := q.Update("payment_proof", proofURL).Error; err != nil {
 		s.Log.Error().Err(err).Str("order_id", orderID).Msg("gagal simpan bukti transfer")
 		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Gagal menyimpan bukti transfer"}
 	}
@@ -262,7 +279,9 @@ func (s *EcomOrdersService) RetryPayment(userID, orderID string) (*dto.CustomerO
 	// regenerate → double charge risk).
 	pgCtx, pgCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer pgCancel()
-	if statusResp, err := s.PG.CheckStatus(pgCtx, orderID); err == nil &&
+	// Ditanyakan dengan id GRUP kalau pesanan ini lahir dari checkout lintas
+	// toko — itu yang dikenal PG, bukan id pesanannya.
+	if statusResp, err := s.PG.CheckStatus(pgCtx, TrxIDPembayaran(&order)); err == nil &&
 		strings.ToUpper(statusResp.PaymentStatus) == "PAID" {
 		s.Log.Info().Str("order_id", orderID).Msg("RetryPayment: PG sudah PAID, sync ke DB")
 		s.syncPaymentStatusFromPG(&order)
@@ -322,7 +341,7 @@ func (s *EcomOrdersService) RetryPayment(userID, orderID string) (*dto.CustomerO
 	// transaksi baru, tapi mapping tetap ke order.id via reference/query.
 	// (Trade-off: kalau PG punya idempotency check by trx_id, retry gagal.
 	//  Untuk sekarang assume PG treat sebagai new).
-	retryTrxID := orderID + "-r" + time.Now().Format("20060102150405")
+	retryTrxID := TrxIDPembayaran(&order) + "-r" + time.Now().Format("20060102150405")
 
 	pgReq := pg.CreatePaymentRequest{
 		Channel:        channel,
@@ -360,7 +379,17 @@ func (s *EcomOrdersService) RetryPayment(userID, orderID string) (*dto.CustomerO
 		"payment_reference":  pgResp.PaymentID,
 		"payment_expired_at": newExpired,
 	}
-	if err := s.DB.Model(&entity.Order{}).Where("id = ?", orderID).Updates(updates).Error; err != nil {
+	// Link baru berlaku untuk SELURUH grup — satu pembayaran menutup semua
+	// pesanan di dalamnya, jadi menyimpannya cuma di satu pesanan membuat
+	// pesanan satunya menampilkan tautan lama yang sudah kedaluwarsa.
+	q := s.DB.Model(&entity.Order{})
+	if order.CheckoutGroupID != nil && *order.CheckoutGroupID != "" {
+		q = q.Where("checkout_group_id = ? AND ecom_user_id = ? AND ecom_status = ?",
+			*order.CheckoutGroupID, userID, "pending_payment")
+	} else {
+		q = q.Where("id = ?", orderID)
+	}
+	if err := q.Updates(updates).Error; err != nil {
 		s.Log.Error().Err(err).Str("order_id", orderID).Msg("RetryPayment: save url failed")
 		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Link bayar dibuat tapi gagal simpan"}
 	}
@@ -426,7 +455,7 @@ func (s *EcomOrdersService) syncPaymentStatusFromPG(order *entity.Order) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	resp, err := s.PG.CheckStatus(ctx, order.ID)
+	resp, err := s.PG.CheckStatus(ctx, TrxIDPembayaran(order))
 	if err != nil {
 		s.Log.Warn().Err(err).Str("order_id", order.ID).Msg("PG CheckStatus sync failed")
 		return
@@ -441,7 +470,16 @@ func (s *EcomOrdersService) syncPaymentStatusFromPG(order *entity.Order) {
 		"status":          "completed",
 		"payment_paid_at": now,
 	}
-	if err := s.DB.Model(&entity.Order{}).Where("id = ?", order.ID).Updates(updates).Error; err != nil {
+	// Satu pembayaran menutup SEMUA pesanan dalam grupnya. Menandai lunas
+	// cuma satu pesanan akan membuat pesanan satunya tetap "belum bayar",
+	// lalu dibatalkan cron expire-unpaid padahal uangnya sudah diterima.
+	q := s.DB.Model(&entity.Order{}).Where("ecom_status = ?", "pending_payment")
+	if order.CheckoutGroupID != nil && *order.CheckoutGroupID != "" {
+		q = q.Where("checkout_group_id = ?", *order.CheckoutGroupID)
+	} else {
+		q = q.Where("id = ?", order.ID)
+	}
+	if err := q.Updates(updates).Error; err != nil {
 		s.Log.Error().Err(err).Str("order_id", order.ID).Msg("PG sync: update order failed")
 		return
 	}
@@ -573,5 +611,6 @@ func (s *EcomOrdersService) GetDetail(userID, orderID string) (*dto.CustomerOrde
 		detail.Payment.ExpiredAt = &s
 	}
 
+	IsiInfoGrupCheckout(s.DB, &order, detail)
 	return detail, nil
 }

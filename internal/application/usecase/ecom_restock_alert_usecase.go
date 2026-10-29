@@ -48,7 +48,9 @@ func (s *EcomRestockAlertService) Subscribe(userID, productID string) *dto.ApiEr
 	// notifikasi untuk produk Bekasi — yang tidak pernah dijual online, jadi
 	// notifikasinya tidak akan pernah datang, dan keberadaan produknya
 	// terkonfirmasi ke pihak yang seharusnya tidak melihat katalog itu.
-	s.DB.Model(&entity.Product{}).Where("id = ? AND location = 'home' AND deleted_at IS NULL", productID).Count(&count)
+	// Tanpa penyaring tempat: customer boleh minta dikabari untuk barang
+	// toko mana pun yang tayang di storefront.
+	s.DB.Model(&entity.Product{}).Where("id = ? AND deleted_at IS NULL", productID).Count(&count)
 	if count == 0 {
 		return &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Produk tidak ditemukan"}
 	}
@@ -103,7 +105,7 @@ func (s *EcomRestockAlertService) TriggerRestockNotif(productID string) {
 	}
 	// Fetch produk untuk info.
 	var product entity.Product
-	if err := s.DB.Where("id = ? AND location = 'home'", productID).First(&product).Error; err != nil {
+	if err := s.DB.Where("id = ?", productID).First(&product).Error; err != nil {
 		return
 	}
 	// Skip kalau stok masih 0 (mungkin dispatch dipanggil salah).

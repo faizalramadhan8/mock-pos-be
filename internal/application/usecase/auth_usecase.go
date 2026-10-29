@@ -7,9 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/golang-jwt/jwt/v5"
-	"github.com/google/uuid"
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
 	"github.com/faizalramadhan/pos-be/internal/domain/entity"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
@@ -18,6 +15,9 @@ import (
 	"github.com/faizalramadhan/pos-be/internal/infrastructure/database"
 	"github.com/faizalramadhan/pos-be/internal/infrastructure/email"
 	"github.com/faizalramadhan/pos-be/pkg/util"
+	"github.com/gofiber/fiber/v2"
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 	"golang.org/x/crypto/bcrypt"
@@ -271,14 +271,14 @@ func (s *AuthService) Login(req dto.LoginRequest, userAgent, baseURL string) (*d
 
 func (s *AuthService) toUserResponse(user *entity.User) dto.UserResponse {
 	resp := dto.UserResponse{
-		ID:       user.ID,
-		Email:    user.Email,
-		FullName: user.FullName,
-		Phone:    user.PhoneNumber,
-		Role:     string(user.Role),
-		NIK:      user.NIK,
-		IsActive: user.IsActive,
-		Initials: getInitials(user.FullName),
+		ID:        user.ID,
+		Email:     user.Email,
+		FullName:  user.FullName,
+		Phone:     user.PhoneNumber,
+		Role:      string(user.Role),
+		NIK:       user.NIK,
+		IsActive:  user.IsActive,
+		Initials:  getInitials(user.FullName),
 		CreatedAt: user.CreatedAt.Format(time.RFC3339),
 	}
 	if user.DateOfBirth != nil {

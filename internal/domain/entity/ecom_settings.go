@@ -2,10 +2,29 @@ package entity
 
 import "time"
 
-// EcomSettings — singleton (id='default'). Sprint 4 Chunk 5 (31 Jul 2026).
+// EcomSettings — satu baris per TEMPAT (migration 000080, 30 Okt 2026).
 // Terpisah dari POS `settings` supaya independent evolution.
+//
+// Dulu singleton `id='default'`. Dipecah begitu storefront melayani dua toko:
+// tiap tempat punya nama, logo, warna, nomor WA, dan — yang paling penting —
+// ALAMAT JEMPUT sendiri. Satu alamat untuk dua toko berarti ongkir salah satu
+// toko dihitung dari titik yang keliru, diam-diam.
+//
+// Baca selalu lewat `EcomAdminSettingsService.Get(location)`; jangan query
+// `id = 'default'` langsung, itu peninggalan bentuk lama.
 type EcomSettings struct {
 	ID string `gorm:"type:varchar(36);primary_key;default:'default'" json:"id"`
+
+	// Location: 'home' | 'store'. Unik — satu baris per tempat.
+	Location string `gorm:"column:location;type:varchar(10);not null;default:'home';uniqueIndex" json:"location"`
+
+	// StorefrontEnabled — toko ini tayang di storefront publik atau belum.
+	//
+	// Bawaan false. Jangan dinyalakan sebelum alamat jemputnya terisi: ongkir
+	// dihitung dari titik asal, dan kalau kosong titik itu jatuh ke variabel
+	// lingkungan — yang isinya alamat toko satunya. Tarifnya salah dan tidak
+	// ada yang memberi tahu.
+	StorefrontEnabled bool `gorm:"column:storefront_enabled;type:tinyint(1);not null;default:0" json:"storefront_enabled"`
 
 	MinOrderAmount float64 `gorm:"column:min_order_amount;type:decimal(15,2);not null;default:0" json:"min_order_amount"`
 
@@ -17,11 +36,16 @@ type EcomSettings struct {
 	AnnouncementBarCtaLabel *string `gorm:"column:announcement_bar_cta_label;type:varchar(50);null" json:"announcement_bar_cta_label,omitempty"`
 	AnnouncementBarCtaURL   *string `gorm:"column:announcement_bar_cta_url;type:varchar(200);null" json:"announcement_bar_cta_url,omitempty"`
 
-	StoreName          string  `gorm:"column:store_name;type:varchar(200);not null;default:'Toko Bahan Kue Santi'" json:"store_name"`
+	StoreName string `gorm:"column:store_name;type:varchar(200);not null;default:'Toko Bahan Kue Santi'" json:"store_name"`
 	// StoreLogo — URL gambar logo storefront (hasil upload). Kosong = pakai
 	// logo bawaan yang digambar di kode. Dibuat jadi isian karena Bu Santi
 	// minta logonya bisa diganti-ganti sendiri tanpa deploy.
-	StoreLogo          *string `gorm:"column:store_logo;type:varchar(500);null" json:"store_logo,omitempty"`
+	StoreLogo *string `gorm:"column:store_logo;type:varchar(500);null" json:"store_logo,omitempty"`
+	// BrandColor — nama palet warna storefront ("biru", "hijau", "ungu",
+	// "jingga"). Kosong = merah muda bawaan. Yang disimpan namanya, bukan
+	// kode warnanya: tiap palet butuh dua belas nada yang serasi, dan satu
+	// warna bebas pilihan admin akan menghasilkan kontras yang gagal.
+	BrandColor         *string `gorm:"column:brand_color;type:varchar(20);null" json:"brand_color,omitempty"`
 	StoreEmail         *string `gorm:"column:store_email;type:varchar(200);null" json:"store_email,omitempty"`
 	StorePickupAddress *string `gorm:"column:store_pickup_address;type:text;null" json:"store_pickup_address,omitempty"`
 	StorePickupPhone   *string `gorm:"column:store_pickup_phone;type:varchar(20);null" json:"store_pickup_phone,omitempty"`
@@ -38,11 +62,11 @@ type EcomSettings struct {
 
 	// Sprint 5 Chunk 7 (2 Aug 2026) — Homepage CMS. Admin edit tampilan Home
 	// tanpa deploy. Kalau NULL/empty, FE fallback ke default hardcoded.
-	HeroKicker     *string `gorm:"column:hero_kicker;type:varchar(80);null" json:"hero_kicker,omitempty"`
-	HeroTitle      *string `gorm:"column:hero_title;type:varchar(200);null" json:"hero_title,omitempty"`
-	HeroSubtitle   *string `gorm:"column:hero_subtitle;type:varchar(300);null" json:"hero_subtitle,omitempty"`
-	HeroCtaLabel   *string `gorm:"column:hero_cta_label;type:varchar(50);null" json:"hero_cta_label,omitempty"`
-	HeroCtaURL     *string `gorm:"column:hero_cta_url;type:varchar(200);null" json:"hero_cta_url,omitempty"`
+	HeroKicker   *string `gorm:"column:hero_kicker;type:varchar(80);null" json:"hero_kicker,omitempty"`
+	HeroTitle    *string `gorm:"column:hero_title;type:varchar(200);null" json:"hero_title,omitempty"`
+	HeroSubtitle *string `gorm:"column:hero_subtitle;type:varchar(300);null" json:"hero_subtitle,omitempty"`
+	HeroCtaLabel *string `gorm:"column:hero_cta_label;type:varchar(50);null" json:"hero_cta_label,omitempty"`
+	HeroCtaURL   *string `gorm:"column:hero_cta_url;type:varchar(200);null" json:"hero_cta_url,omitempty"`
 	// JSON array of product IDs (max ~20). Diserialize dari string, di-parse
 	// di response layer supaya FE dapat []string bukan raw JSON.
 	PinnedProductIDs    *string `gorm:"column:pinned_product_ids;type:json;null" json:"-"`

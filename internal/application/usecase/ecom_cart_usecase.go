@@ -3,11 +3,11 @@ package usecase
 import (
 	"context"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
 	"github.com/faizalramadhan/pos-be/internal/domain/entity"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
+	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
 )
@@ -37,10 +37,20 @@ func (s *EcomCartService) GetCart(userID string) (*dto.CartResponse, *dto.ApiErr
 // Validate: produk exists + ecom_is_available + stok cukup + minOrder.
 func (s *EcomCartService) AddItem(userID string, req dto.CartAddRequest) (*dto.CartResponse, *dto.ApiError) {
 	var product entity.Product
-	if err := s.DB.Where("id = ? AND location = 'home' AND deleted_at IS NULL", req.ProductID).First(&product).Error; err != nil {
+	// Penyaring `location = 'home'` dihapus 30 Okt 2026: keranjang sekarang
+	// boleh berisi barang dari dua toko. Yang menjaga tetap `ecom_is_available`
+	// di bawah — itu yang menentukan barang boleh dijual online, dan berlaku
+	// sama untuk kedua toko.
+	if err := s.DB.Where("id = ? AND deleted_at IS NULL", req.ProductID).First(&product).Error; err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Produk tidak ditemukan"}
 	}
 	if !product.EcomIsAvailable {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Produk tidak tersedia di toko online"}
+	}
+	// Penjaga di TITIK MASUK keranjang. Tanpa ini, siapa pun yang tahu id
+	// produk toko yang belum tayang bisa memasukkannya ke keranjang lewat
+	// panggilan API langsung — dan memotong stok toko itu saat checkout.
+	if !TempatBolehTayang(s.DB, product.Location) {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Produk tidak tersedia di toko online"}
 	}
 	if req.Quantity < product.EcomMinOrder {
@@ -123,7 +133,8 @@ func (s *EcomCartService) Clear(userID string) *dto.ApiError {
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 func (s *EcomCartService) buildResponse(items []entity.EcomCartItem) *dto.CartResponse {
-	resp := &dto.CartResponse{Items: []dto.CartItemResponse{}}
+	resp := &dto.CartResponse{Items: []dto.CartItemResponse{}, Groups: []dto.CartGroup{}}
+	perTempat := map[string]*dto.CartGroup{}
 	for _, it := range items {
 		if it.Product == nil {
 			continue // FK cascade broke or race — skip silently
@@ -155,7 +166,10 @@ func (s *EcomCartService) buildResponse(items []entity.EcomCartItem) *dto.CartRe
 			unavailableReason = "Stok tidak cukup"
 		}
 
+		loc := TempatSah(p.Location)
 		row := dto.CartItemResponse{
+			Location:          loc,
+			StoreName:         NamaToko(s.DB, loc),
 			ID:                it.ID,
 			ProductID:         p.ID,
 			Name:              p.Name,
@@ -173,9 +187,22 @@ func (s *EcomCartService) buildResponse(items []entity.EcomCartItem) *dto.CartRe
 			UnavailableReason: unavailableReason,
 		}
 		resp.Items = append(resp.Items, row)
+		g := perTempat[loc]
+		if g == nil {
+			g = &dto.CartGroup{
+				Location:       loc,
+				StoreName:      row.StoreName,
+				Items:          []dto.CartItemResponse{},
+				MinOrderAmount: s.minimalBelanja(loc),
+			}
+			perTempat[loc] = g
+		}
+		g.Items = append(g.Items, row)
 		if !unavailable {
 			resp.Subtotal += subtotal
 			resp.TotalQty += it.Quantity
+			g.Subtotal += subtotal
+			g.TotalQty += it.Quantity
 			if p.EcomWeightGrams != nil {
 				resp.TotalWeight += *p.EcomWeightGrams * it.Quantity
 			}
@@ -185,5 +212,22 @@ func (s *EcomCartService) buildResponse(items []entity.EcomCartItem) *dto.CartRe
 			resp.HasUnavailable = true
 		}
 	}
+	// Urutan tetap: rumah dulu, lalu Bekasi. Iterasi map di Go acak, dan
+	// urutan keranjang yang berubah tiap muat ulang membuat customer kira
+	// isinya berubah.
+	for _, loc := range []string{TempatRumah, TempatToko} {
+		if g := perTempat[loc]; g != nil {
+			resp.Groups = append(resp.Groups, *g)
+		}
+	}
 	return resp
+}
+
+// minimalBelanja — ambang belanja satu toko. 0 = tanpa batas.
+func (s *EcomCartService) minimalBelanja(location string) float64 {
+	var st entity.EcomSettings
+	if err := s.DB.Select("min_order_amount").Where("location = ?", TempatSah(location)).First(&st).Error; err != nil {
+		return 0
+	}
+	return st.MinOrderAmount
 }

@@ -80,7 +80,7 @@ func (s *EcomOrdersService) GetTracking(userID, orderID string) (*dto.OrderTrack
 	}
 	trackingCacheMu.Unlock()
 
-	t, err := s.Admin.shippingClient().GetTracking(trackingID)
+	t, err := s.Admin.shippingClient(TempatDariOrderSource(order.OrderSource)).GetTracking(trackingID)
 	if err != nil {
 		s.Log.Warn().Err(err).Str("order_id", orderID).Msg("gagal ambil tracking Biteship")
 		return nil, &dto.ApiError{

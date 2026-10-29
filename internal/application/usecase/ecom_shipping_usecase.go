@@ -4,12 +4,12 @@ import (
 	"context"
 	"strings"
 
-	"github.com/gofiber/fiber/v2"
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
 	"github.com/faizalramadhan/pos-be/internal/domain/entity"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
 	"github.com/faizalramadhan/pos-be/internal/infrastructure/biteship"
 	"github.com/faizalramadhan/pos-be/internal/infrastructure/config"
+	"github.com/gofiber/fiber/v2"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
 )
@@ -60,12 +60,17 @@ func NewBiteshipClient(cfg *config.Config) *biteship.Client {
 //
 // Best-effort: kalau query gagal atau barisnya belum ada, pakai env apa
 // adanya. Pengiriman tidak boleh mati gara-gara tabel pengaturan.
-func biteshipWithStoreOrigin(db *gorm.DB, base *biteship.Client) *biteship.Client {
+//
+// `location` menentukan toko MANA yang jadi titik jemput. Sejak storefront
+// melayani dua toko, memanggilnya tanpa tempat yang benar berarti kurir
+// dikirim ke alamat yang salah dan ongkirnya dihitung dari jarak yang salah —
+// dua-duanya tanpa pesan salah apa pun.
+func biteshipWithStoreOrigin(db *gorm.DB, base *biteship.Client, location string) *biteship.Client {
 	if db == nil || base == nil {
 		return base
 	}
 	var st entity.EcomSettings
-	if err := db.Where("id = ?", "default").First(&st).Error; err != nil {
+	if err := db.Where("location = ?", TempatSah(location)).First(&st).Error; err != nil {
 		return base
 	}
 	deref := func(p *string) string {
@@ -86,9 +91,9 @@ func biteshipWithStoreOrigin(db *gorm.DB, base *biteship.Client) *biteship.Clien
 	)
 }
 
-// Shipping — klien siap pakai untuk service ini.
-func (s *EcomShippingService) Shipping() *biteship.Client {
-	return biteshipWithStoreOrigin(s.DB, s.Biteship)
+// Shipping — klien siap pakai, titik jemputnya milik `location`.
+func (s *EcomShippingService) Shipping(location string) *biteship.Client {
+	return biteshipWithStoreOrigin(s.DB, s.Biteship, location)
 }
 
 // SearchAreas — proxy ke Biteship Maps API. Dipakai FE address form untuk
@@ -99,10 +104,13 @@ func (s *EcomShippingService) SearchAreas(input string) ([]biteship.Area, *dto.A
 	if len(input) < 3 {
 		return []biteship.Area{}, nil
 	}
-	if !s.Shipping().IsConfigured() {
+	// Pencarian wilayah tidak ada hubungannya dengan titik jemput — cuma
+	// proxy ke Maps API. Tempat mana pun menghasilkan klien yang sama.
+	cl := s.Shipping(TempatRumah)
+	if !cl.IsConfigured() {
 		return []biteship.Area{}, nil
 	}
-	areas, err := s.Shipping().SearchAreas(input)
+	areas, err := cl.SearchAreas(input)
 	if err != nil {
 		s.Log.Warn().Err(err).Str("input", input).Msg("Biteship SearchAreas failed")
 		// Kembalikan empty saja — cegah address form stuck loading. FE fallback:
@@ -115,42 +123,59 @@ func (s *EcomShippingService) SearchAreas(input string) ([]biteship.Area, *dto.A
 	return areas, nil
 }
 
-// GetRates — kalkulasi shipping option berdasar alamat + cart total berat.
+// GetRates — ongkir per TOKO, bukan satu angka untuk seluruh keranjang.
+//
+// Keranjang boleh campur: gula dari toko rumah + terigu dari Bekasi. Tiap
+// toko punya alamat jemput sendiri, jadi jaraknya beda, tarifnya beda, dan
+// customer memilih kurir untuk masing-masing. Hasilnya dua pesanan saat
+// checkout — satu `orders` cuma muat satu kurir, satu ongkir, satu resi.
 func (s *EcomShippingService) GetRates(userID string, req dto.ShippingRateRequest) (*dto.ShippingRatesResponse, *dto.ApiError) {
-	// Load address
 	var addr entity.EcomAddress
 	if err := s.DB.Where("id = ? AND user_id = ? AND deleted_at IS NULL", req.AddressID, userID).First(&addr).Error; err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Alamat tidak ditemukan"}
 	}
 
-	// Items untuk Biteship — bisa dari 3 source (sama pattern seperti CreateOrder):
-	//   1. BuyNowItems (bypass cart, dari PDP)
-	//   2. SelectedItemIDs (partial cart)
-	//   3. Default: seluruh cart
-	items := make([]biteship.Item, 0)
-	totalWeight := 0
+	// Barangnya bisa datang dari tiga sumber — sama seperti CreateOrder:
+	//   1. BuyNowItems (langsung dari halaman produk, lewati keranjang)
+	//   2. SelectedItemIDs (sebagian keranjang)
+	//   3. Seluruh keranjang
+	type kelompok struct {
+		items    []biteship.Item
+		weight   int
+		subtotal float64
+	}
+	perTempat := map[string]*kelompok{}
 
-	appendFromProduct := func(p *entity.Product, qty int) {
-		if p == nil {
+	tambah := func(p *entity.Product, qty int) {
+		if p == nil || qty <= 0 {
 			return
 		}
 		w := 200
 		if p.EcomWeightGrams != nil && *p.EcomWeightGrams > 0 {
 			w = *p.EcomWeightGrams
 		}
-		value := int(p.SellingPrice)
-		if p.EcomPrice != nil {
-			value = int(*p.EcomPrice)
+		// Harga baris memakai penghitung yang sama dengan keranjang dan
+		// checkout — kalau beda, nilai barang yang dilaporkan ke kurir
+		// (dipakai asuransi) tidak cocok dengan yang ditagih.
+		hrg := computeEcomLinePrice(s.DB, p, qty)
+		loc := TempatSah(p.Location)
+		g := perTempat[loc]
+		if g == nil {
+			g = &kelompok{}
+			perTempat[loc] = g
 		}
-		items = append(items, biteship.Item{Name: p.Name, Value: value, Weight: w, Quantity: qty})
-		totalWeight += w * qty
+		g.items = append(g.items, biteship.Item{
+			Name: p.Name, Value: int(hrg.UnitPrice), Weight: w, Quantity: qty,
+		})
+		g.weight += w * qty
+		g.subtotal += hrg.LineTotal
 	}
 
 	if len(req.BuyNowItems) > 0 {
 		for _, bn := range req.BuyNowItems {
 			var p entity.Product
 			if err := s.DB.Where("id = ? AND deleted_at IS NULL", bn.ProductID).First(&p).Error; err == nil {
-				appendFromProduct(&p, bn.Quantity)
+				tambah(&p, bn.Quantity)
 			}
 		}
 	} else {
@@ -163,42 +188,79 @@ func (s *EcomShippingService) GetRates(userID string, req dto.ShippingRateReques
 			return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to fetch cart"}
 		}
 		for _, c := range cart {
-			appendFromProduct(c.Product, c.Quantity)
+			tambah(c.Product, c.Quantity)
 		}
 	}
-	if totalWeight == 0 {
-		totalWeight = 1000
-	}
 
-	// Biteship — prefer area_id (accurate, unlock kurir Anteraja/Ninja/ID
-	// Express), fallback postal_code, fallback lat/lng.
-	rateReq := biteship.RateRequest{
-		DestinationPostal: addr.Zipcode,
-		DestinationLat:    addr.Latitude,
-		DestinationLng:    addr.Longitude,
-		Items:             items,
-		TotalWeightGrams:  totalWeight,
-	}
-	if addr.BiteshipAreaID != nil && *addr.BiteshipAreaID != "" {
-		rateReq.DestinationAreaID = *addr.BiteshipAreaID
-	}
-	rates, err := s.Shipping().GetRates(rateReq)
-	if err != nil {
-		s.Log.Error().Err(err).Msg("Failed to get shipping rates")
-		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Gagal ambil ongkir"}
-	}
-
-	resp := &dto.ShippingRatesResponse{TotalWeightGrams: totalWeight}
+	resp := &dto.ShippingRatesResponse{Groups: []dto.ShippingRateGroup{}}
 	resp.Address.Label = addr.Label
 	resp.Address.RecipientName = addr.RecipientName
 	resp.Address.City = addr.City
 	resp.Address.Province = addr.Province
-	for _, r := range rates {
-		resp.Rates = append(resp.Rates, dto.ShippingRate{
-			Courier: r.Courier, CourierName: r.CourierName,
-			Service: r.Service, ServiceName: r.ServiceName,
-			Cost: r.Cost, ETD: r.ETD,
-		})
+
+	// Urutan tetap (rumah dulu, lalu toko) supaya tampilan checkout tidak
+	// berubah-ubah urutannya tiap kali halaman dimuat — iterasi map di Go
+	// urutannya acak.
+	for _, loc := range []string{TempatRumah, TempatToko} {
+		g := perTempat[loc]
+		if g == nil || len(g.items) == 0 {
+			continue
+		}
+		berat := g.weight
+		if berat == 0 {
+			berat = 1000
+		}
+		grup := dto.ShippingRateGroup{
+			Location:         loc,
+			StoreName:        NamaToko(s.DB, loc),
+			TotalWeightGrams: berat,
+			Subtotal:         g.subtotal,
+			Rates:            []dto.ShippingRate{},
+		}
+		resp.TotalWeightGrams += berat
+
+		// Toko yang sedang tidak tayang: jangan panggil Biteship sama sekali,
+		// tapi tetap tampilkan kelompoknya dengan alasannya. Menghilangkannya
+		// diam-diam membuat customer melihat keranjang yang isinya tidak
+		// pernah bisa dibayar tanpa tahu sebabnya.
+		if !TempatBolehTayang(s.DB, loc) {
+			grup.Error = grup.StoreName + " sedang tidak melayani pesanan online. Hapus barangnya dari keranjang untuk melanjutkan."
+			resp.Groups = append(resp.Groups, grup)
+			continue
+		}
+
+		rateReq := biteship.RateRequest{
+			DestinationPostal: addr.Zipcode,
+			DestinationLat:    addr.Latitude,
+			DestinationLng:    addr.Longitude,
+			Items:             g.items,
+			TotalWeightGrams:  berat,
+		}
+		if addr.BiteshipAreaID != nil && *addr.BiteshipAreaID != "" {
+			rateReq.DestinationAreaID = *addr.BiteshipAreaID
+		}
+		rates, err := s.Shipping(loc).GetRates(rateReq)
+		if err != nil {
+			// Kegagalan satu toko tidak mematikan toko lain. Customer masih
+			// bisa checkout yang satunya; kalau seluruh halaman dimatikan,
+			// dia tidak bisa belanja sama sekali.
+			s.Log.Error().Err(err).Str("location", loc).Msg("Failed to get shipping rates")
+			grup.Error = "Ongkir dari " + grup.StoreName + " belum bisa dihitung. Coba lagi sebentar lagi."
+			resp.Groups = append(resp.Groups, grup)
+			continue
+		}
+		for _, r := range rates {
+			grup.Rates = append(grup.Rates, dto.ShippingRate{
+				Courier: r.Courier, CourierName: r.CourierName,
+				Service: r.Service, ServiceName: r.ServiceName,
+				Cost: r.Cost, ETD: r.ETD,
+			})
+		}
+		if len(grup.Rates) == 0 && grup.Error == "" {
+			grup.Error = "Tidak ada kurir yang melayani rute ini dari " + grup.StoreName + "."
+		}
+		resp.Groups = append(resp.Groups, grup)
 	}
+
 	return resp, nil
 }

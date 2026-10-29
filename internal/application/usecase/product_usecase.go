@@ -4,14 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
 	"github.com/faizalramadhan/pos-be/internal/domain/entity"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
 	"github.com/faizalramadhan/pos-be/internal/domain/repository"
+	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
@@ -131,23 +132,23 @@ func (s *ProductService) Create(req dto.CreateProductRequest, userID string) (*d
 		loc = "store"
 	}
 	product := &entity.Product{
-		ID:            uuid.New().String(),
-		SKU:           req.SKU,
-		Barcode:       req.Barcode,
-		Name:          req.Name,
-		NameID:        req.NameID,
-		CategoryID:    req.CategoryID,
-		SupplierID:    req.SupplierID,
-		PurchasePrice: req.PurchasePrice,
-		SellingPrice:  req.SellingPrice,
-		MemberPrice:   req.MemberPrice,
-		QtyPerBox:     req.QtyPerBox,
-		Stock:         req.Stock,
-		Unit:          req.Unit,
-		Image:         req.Image,
-		MinStock:      req.MinStock,
-		IsActive:      true,
-		Location:      loc,
+		ID:             uuid.New().String(),
+		SKU:            req.SKU,
+		Barcode:        req.Barcode,
+		Name:           req.Name,
+		NameID:         req.NameID,
+		CategoryID:     req.CategoryID,
+		SupplierID:     req.SupplierID,
+		PurchasePrice:  req.PurchasePrice,
+		SellingPrice:   req.SellingPrice,
+		MemberPrice:    req.MemberPrice,
+		QtyPerBox:      req.QtyPerBox,
+		Stock:          req.Stock,
+		Unit:           req.Unit,
+		Image:          req.Image,
+		MinStock:       req.MinStock,
+		IsActive:       true,
+		Location:       loc,
 		EcomCategoryID: req.EcomCategoryID,
 	}
 
@@ -501,6 +502,10 @@ func tierToResponse(t *entity.ProductPriceTier) dto.ProductPriceTierResponse {
 		Note:       t.Note,
 		CreatedAt:  t.CreatedAt.Format(time.RFC3339),
 	}
+	if t.StartsAt != nil {
+		s := t.StartsAt.Format(time.RFC3339)
+		out.StartsAt = &s
+	}
 	if t.ExpiresAt != nil {
 		s := t.ExpiresAt.Format(time.RFC3339)
 		out.ExpiresAt = &s
@@ -535,6 +540,55 @@ func (s *ProductService) ListPriceTiers(productID string) ([]dto.ProductPriceTie
 	return out, nil
 }
 
+// tierSedangBerlaku — jendela jadwal sebuah tier.
+//
+// Dipakai SEMUA penghitung harga dan semua tempat yang menampilkan tier,
+// supaya "yang tampil" dan "yang ditagih" tidak pernah berbeda. Perbedaan
+// semacam itu persis yang terjadi 18 Okt 2026 pada harga grosir storefront:
+// tabelnya bilang aktif, checkout-nya menagih harga normal.
+//
+// expires_at bersifat EKSKLUSIF — lihat parseJadwalTier: "sampai 31 Des"
+// tersimpan sebagai 1 Januari 00:00, jadi tepat pada detik itu promonya habis.
+func tierSedangBerlaku(t *entity.ProductPriceTier, now time.Time) bool {
+	if t.StartsAt != nil && t.StartsAt.After(now) {
+		return false
+	}
+	if t.ExpiresAt != nil && !t.ExpiresAt.After(now) {
+		return false
+	}
+	return true
+}
+
+// parseJadwalTier membaca "YYYY-MM-DD" atau RFC3339. String kosong = tidak
+// dibatasi (NULL).
+//
+// Tanggal polos dibaca di zona lokal — aplikasi memaksa Asia/Jakarta saat
+// startup, jadi "1 Desember" berarti 1 Desember WIB, bukan UTC.
+//
+// akhirHari dipakai untuk batas AKHIR: "sampai 31 Des" yang disimpan apa
+// adanya akan mati pada 31 Desember pukul 00:00 — promonya habis tepat di
+// detik pertama hari yang tertulis di spanduk, dan customer yang datang hari
+// itu justru ditagih harga normal. Jadi tanggalnya digeser ke 00:00 hari
+// berikutnya supaya hari terakhir ikut terhitung penuh.
+func parseJadwalTier(raw string, akhirHari bool) (*time.Time, error) {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return nil, nil
+	}
+	if t, err := time.ParseInLocation("2006-01-02", v, time.Local); err == nil {
+		if akhirHari {
+			t = t.AddDate(0, 0, 1)
+		}
+		return &t, nil
+	}
+	t, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return nil, err
+	}
+	t = t.In(time.Local)
+	return &t, nil
+}
+
 func (s *ProductService) buildTierFromRequest(productID string, req dto.SavePriceTierRequest) (*entity.ProductPriceTier, *dto.ApiError) {
 	tier := &entity.ProductPriceTier{
 		ProductID:  productID,
@@ -543,12 +597,35 @@ func (s *ProductService) buildTierFromRequest(productID string, req dto.SavePric
 		TargetType: req.TargetType,
 		Note:       req.Note,
 	}
-	// Tier expiry: DurationDays > 0 → set expires_at = NOW + duration.
-	// 0/omit = tidak terbatas (NULL).
-	if req.DurationDays > 0 {
+	// Jadwal berlaku. StartsAt/ExpiresAt menang atas DurationDays — kalau
+	// pointer-nya ada (termasuk string kosong) itu keputusan admin yang
+	// eksplisit, termasuk keputusan untuk MENGHAPUS batasnya.
+	if req.StartsAt != nil {
+		t, err := parseJadwalTier(*req.StartsAt, false)
+		if err != nil {
+			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Tanggal mulai tidak valid"}
+		}
+		tier.StartsAt = t
+	}
+	if req.ExpiresAt != nil {
+		t, err := parseJadwalTier(*req.ExpiresAt, true)
+		if err != nil {
+			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Tanggal selesai tidak valid"}
+		}
+		tier.ExpiresAt = t
+	} else if req.DurationDays > 0 {
+		// Cara lama: NOW + N hari. Hanya dipakai kalau klien tidak mengirim
+		// expires_at sama sekali (bundel FE lama).
 		exp := time.Now().AddDate(0, 0, req.DurationDays)
 		tier.ExpiresAt = &exp
 	}
+	if tier.StartsAt != nil && tier.ExpiresAt != nil && !tier.ExpiresAt.After(*tier.StartsAt) {
+		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Tanggal selesai harus setelah tanggal mulai"}
+	}
+	// Whitelist hanya bermakna untuk member_specific. 'all_members' berarti
+	// SEMUA member, jadi daftarnya sengaja dikosongkan — menyimpan sisa
+	// whitelist dari pilihan sebelumnya akan membuat riwayat audit berbohong
+	// tentang siapa yang sebenarnya dapat harga itu.
 	if req.TargetType == "member_specific" {
 		if len(req.MemberIDs) == 0 {
 			return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Tier 'member_specific' wajib pilih minimal 1 member"}
@@ -602,6 +679,7 @@ func (s *ProductService) logTierChange(tier *entity.ProductPriceTier, action str
 		TargetType: tier.TargetType,
 		MemberIDs:  memberIDsJSON,
 		Note:       tier.Note,
+		StartsAt:   tier.StartsAt,
 		ExpiresAt:  tier.ExpiresAt,
 		Action:     action,
 		StartDate:  now,
@@ -652,6 +730,10 @@ func (s *ProductService) ListTierHistory(productID string) ([]dto.ProductPriceTi
 		if r.EndDate != nil {
 			s := r.EndDate.Format(time.RFC3339)
 			resp.EndDate = &s
+		}
+		if r.StartsAt != nil {
+			s := r.StartsAt.Format(time.RFC3339)
+			resp.StartsAt = &s
 		}
 		if r.ExpiresAt != nil {
 			s := r.ExpiresAt.Format(time.RFC3339)

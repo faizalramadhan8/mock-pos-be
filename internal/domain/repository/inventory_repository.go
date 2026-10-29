@@ -2,9 +2,9 @@ package repository
 
 import (
 	"context"
-	"time"
 	"github.com/faizalramadhan/pos-be/internal/domain/entity"
 	"gorm.io/gorm"
+	"time"
 )
 
 type StockMovementRepository struct {

@@ -17,19 +17,25 @@ type EcomCategoryResponse struct {
 // EcomProductListItem — compact untuk grid + card. Deskripsi + tier tidak
 // dikirim di list (hemat bandwidth). Detail via GET /:id.
 type EcomProductListItem struct {
-	ID              string   `json:"id"`
-	Name            string   `json:"name"`
-	NameID          string   `json:"name_id"`
-	SKU             string   `json:"sku"`
-	CategoryID      string   `json:"category_id"`
-	CategoryName    string   `json:"category_name,omitempty"`
-	Image           string   `json:"image,omitempty"`
-	Price           float64  `json:"price"`             // ecom_price fallback selling_price
-	MemberPrice     *float64 `json:"member_price,omitempty"` // ecom_member_price fallback member_price
-	Stock           int      `json:"stock"`             // stock_ecom
-	WeightGrams     *int     `json:"weight_grams,omitempty"`
-	MinOrder        int      `json:"min_order"`
-	IsLowStock      bool     `json:"is_low_stock"`      // stock ≤ 5 (urgency signal)
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	NameID       string   `json:"name_id"`
+	SKU          string   `json:"sku"`
+	CategoryID   string   `json:"category_id"`
+	CategoryName string   `json:"category_name,omitempty"`
+	Image        string   `json:"image,omitempty"`
+	Price        float64  `json:"price"`                  // ecom_price fallback selling_price
+	MemberPrice  *float64 `json:"member_price,omitempty"` // ecom_member_price fallback member_price
+	Stock        int      `json:"stock"`                  // stock_ecom
+	WeightGrams  *int     `json:"weight_grams,omitempty"`
+	MinOrder     int      `json:"min_order"`
+	IsLowStock   bool     `json:"is_low_stock"` // stock ≤ 5 (urgency signal)
+	// Location + StoreName — toko yang menjual barang ini. Storefront
+	// melayani dua toko sejak 30 Okt 2026, dan customer perlu tahu dari mana
+	// barangnya dikirim: jaraknya menentukan ongkir, dan dua toko di satu
+	// keranjang berarti dua paket.
+	Location  string `json:"location"`
+	StoreName string `json:"store_name,omitempty"`
 }
 
 // EcomProductDetail — full detail untuk PDP. Include description + tiers +

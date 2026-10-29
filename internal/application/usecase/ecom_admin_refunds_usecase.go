@@ -88,7 +88,7 @@ func (s *EcomAdminRefundsService) Create(adminID string, req dto.EcomRefundCreat
 				Type:      "in",
 				Quantity:  item.Qty,
 				UnitType:  "individual",
-				Location:  "home",
+				Location:  TempatProduk(tx, item.ProductID),
 				Reason:    "refund",
 				Note:      fmt.Sprintf("Barang retur dari refund online (Order #%s)", req.OrderID[:8]),
 				CreatedBy: adminID,

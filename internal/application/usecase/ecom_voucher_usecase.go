@@ -5,10 +5,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
 	"github.com/faizalramadhan/pos-be/internal/domain/entity"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
+	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
@@ -29,7 +29,7 @@ func NewEcomVoucherService(ctx context.Context, db *gorm.DB) *EcomVoucherService
 // Validate — customer input kode + subtotal cart, kita return computed
 // discount amount atau error message. Ini query-only, TIDAK increment
 // used_count (increment terjadi saat checkout success — di CreateOrder).
-func (s *EcomVoucherService) Validate(code string, subtotal float64) (*dto.VoucherValidateResponse, *dto.ApiError) {
+func (s *EcomVoucherService) Validate(code string, subtotal float64, location string) (*dto.VoucherValidateResponse, *dto.ApiError) {
 	normalized := normalizeVoucherCode(code)
 	if normalized == "" {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Kode voucher kosong"}
@@ -38,6 +38,9 @@ func (s *EcomVoucherService) Validate(code string, subtotal float64) (*dto.Vouch
 	var v entity.EcomVoucher
 	if err := s.DB.Where("code = ? AND deleted_at IS NULL", normalized).First(&v).Error; err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Kode voucher tidak ditemukan"}
+	}
+	if fail := s.cocokTempat(&v, location); fail != nil {
+		return nil, fail
 	}
 	if !v.IsActive {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Voucher tidak aktif"}
@@ -69,6 +72,25 @@ func (s *EcomVoucherService) Validate(code string, subtotal float64) (*dto.Vouch
 	}, nil
 }
 
+// cocokTempat — voucher hanya berlaku di tokonya sendiri.
+//
+// Bu Santi 30 Okt 2026: "jangan sampai yang kepotong malah toko lain".
+// Tanpa pemeriksaan ini, kode promo toko rumah akan memotong tagihan Bekasi
+// di keranjang campur — dan yang menanggung diskonnya jadi toko yang salah.
+//
+// Pesannya menyebut toko pemiliknya, bukan sekadar "tidak berlaku": customer
+// yang memasukkan kode di blok yang keliru butuh tahu di mana harus memakainya.
+func (s *EcomVoucherService) cocokTempat(v *entity.EcomVoucher, location string) *dto.ApiError {
+	loc := TempatSah(location)
+	if TempatSah(v.Location) == loc {
+		return nil
+	}
+	return &dto.ApiError{
+		StatusCode: fiber.ErrBadRequest,
+		Message:    "Voucher ini hanya berlaku untuk " + NamaToko(s.DB, v.Location),
+	}
+}
+
 // ComputeVoucherDiscount — pure function, dipakai di Validate + CreateOrder
 // (re-verify server-side, jangan trust FE). Percent-type cap ke MaxDiscount.
 // Fixed-type di-clamp ke subtotal (voucher > subtotal = subtotal).
@@ -92,7 +114,7 @@ func ComputeVoucherDiscount(v entity.EcomVoucher, subtotal float64) float64 {
 // row untuk final check (dedup vs race), increment used_count.
 // Return error kalau ternyata sudah expired / habis / dst antara Validate
 // (di FE) dan Create (di BE) — cegah exploit multi-tab.
-func (s *EcomVoucherService) ApplyOnCheckout(tx *gorm.DB, code string, subtotal float64) (float64, *entity.EcomVoucher, *dto.ApiError) {
+func (s *EcomVoucherService) ApplyOnCheckout(tx *gorm.DB, code string, subtotal float64, location string) (float64, *entity.EcomVoucher, *dto.ApiError) {
 	normalized := normalizeVoucherCode(code)
 	if normalized == "" {
 		return 0, nil, nil
@@ -102,6 +124,9 @@ func (s *EcomVoucherService) ApplyOnCheckout(tx *gorm.DB, code string, subtotal 
 	// yang usage_limit tinggal 1 tidak double-consume.
 	if err := tx.Where("code = ? AND deleted_at IS NULL", normalized).First(&v).Error; err != nil {
 		return 0, nil, &dto.ApiError{StatusCode: fiber.ErrBadRequest, Message: "Kode voucher tidak valid"}
+	}
+	if fail := s.cocokTempat(&v, location); fail != nil {
+		return 0, nil, fail
 	}
 	// Re-verify semua guard (mirror Validate).
 	now := time.Now()
@@ -157,6 +182,7 @@ func (s *EcomVoucherService) Create(req dto.VoucherCreateRequest) (*entity.EcomV
 		return nil, &dto.ApiError{StatusCode: fiber.ErrConflict, Message: "Kode sudah ada"}
 	}
 	v := entity.EcomVoucher{
+		Location:    TempatSah(req.Location),
 		ID:          uuid.New().String(),
 		Code:        code,
 		Description: req.Description,
@@ -199,6 +225,13 @@ func (s *EcomVoucherService) Update(id string, req dto.VoucherCreateRequest) (*e
 	v.ExpiresAt = parseTimePtr(req.ExpiresAt)
 	if req.IsActive != nil {
 		v.IsActive = *req.IsActive
+	}
+	// Tempat hanya berubah kalau dikirim eksplisit. Kalau dikosongkan lalu
+	// dinormalkan, voucher Bekasi akan diam-diam pindah ke rumah setiap kali
+	// admin mengedit hal lain — dan potongannya berpindah toko tanpa ada
+	// yang meminta.
+	if strings.TrimSpace(req.Location) != "" {
+		v.Location = TempatSah(req.Location)
 	}
 	if err := s.DB.Save(&v).Error; err != nil {
 		return nil, &dto.ApiError{StatusCode: fiber.ErrInternalServerError, Message: "Failed to update"}

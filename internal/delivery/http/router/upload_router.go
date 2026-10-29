@@ -3,11 +3,11 @@ package router
 import (
 	"context"
 
-	"github.com/gofiber/fiber/v2"
 	"github.com/faizalramadhan/pos-be/internal/delivery/http/handler"
 	"github.com/faizalramadhan/pos-be/internal/delivery/http/middleware"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
 	"github.com/faizalramadhan/pos-be/internal/infrastructure/config"
+	"github.com/gofiber/fiber/v2"
 )
 
 func UseUploadRouter(ctx context.Context, r fiber.Router) {

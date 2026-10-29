@@ -4,10 +4,10 @@ import (
 	"context"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
 	"github.com/faizalramadhan/pos-be/internal/domain/entity"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
+	"github.com/gofiber/fiber/v2"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
 )
@@ -113,6 +113,9 @@ func (s *EcomAdminStatsService) GetDashboard() (*dto.EcomAdminDashboard, *dto.Ap
 	// di Bekasi sementara rak rumah benar-benar kosong, atau sebaliknya.
 	var lowStockCount int64
 	s.DB.Model(&entity.Product{}).
+		// Sengaja tetap 'home': peringatan stok tipis di panel ini soal rak
+		// yang dikelola dari sini. Stok Bekasi punya peringatannya sendiri di
+		// POS, dan menggabungkannya membuat dua peringatan untuk satu rak.
 		Where("location = 'home' AND deleted_at IS NULL AND is_active = 1 AND ecom_is_available = 1 AND stock > 0 AND stock <= 5").
 		Count(&lowStockCount)
 	dash.LowStockCount = int(lowStockCount)

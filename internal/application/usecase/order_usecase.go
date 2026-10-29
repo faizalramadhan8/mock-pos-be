@@ -7,8 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
 	"github.com/faizalramadhan/pos-be/internal/domain/entity"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
@@ -16,6 +14,8 @@ import (
 	"github.com/faizalramadhan/pos-be/internal/infrastructure/config"
 	"github.com/faizalramadhan/pos-be/internal/infrastructure/database"
 	"github.com/faizalramadhan/pos-be/internal/infrastructure/whatsapp"
+	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
@@ -29,18 +29,18 @@ import (
 const largeTransactionThreshold = 500_000.0
 
 type OrderService struct {
-	Log          *zerolog.Logger
-	DB           *gorm.DB
-	Repo         *repository.OrderRepository
-	ProductRepo  *repository.ProductRepository
-	BatchRepo    *repository.StockBatchRepository
-	SettingsRepo *repository.SettingsRepository
-	AuthRepo     *repository.AuthRepository
-	MemberRepo   *repository.MemberRepository
+	Log           *zerolog.Logger
+	DB            *gorm.DB
+	Repo          *repository.OrderRepository
+	ProductRepo   *repository.ProductRepository
+	BatchRepo     *repository.StockBatchRepository
+	SettingsRepo  *repository.SettingsRepository
+	AuthRepo      *repository.AuthRepository
+	MemberRepo    *repository.MemberRepository
 	PointMoveRepo *repository.MemberPointMovementRepository
-	Redis        *redis.Client
-	WA           *whatsapp.Service
-	Configs      *config.Config
+	Redis         *redis.Client
+	WA            *whatsapp.Service
+	Configs       *config.Config
 }
 
 func NewOrderService(ctx context.Context, db *gorm.DB) *OrderService {

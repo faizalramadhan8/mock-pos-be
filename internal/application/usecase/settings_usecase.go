@@ -3,12 +3,12 @@ package usecase
 import (
 	"context"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
 	"github.com/faizalramadhan/pos-be/internal/domain/entity"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
 	"github.com/faizalramadhan/pos-be/internal/domain/repository"
+	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
 )
@@ -40,6 +40,17 @@ func (s *SettingsService) Update(req dto.UpdateSettingsRequest) (*dto.SettingsRe
 		return nil, &dto.ApiError{StatusCode: fiber.ErrNotFound, Message: "Settings not found"}
 	}
 
+	// Pointer, jadi nil = "tidak diubah" dan string kosong = "kembali ke
+	// warna bawaan". Tanpa pembedaan itu Bu Santi tidak bisa membatalkan
+	// pilihannya setelah mencoba.
+	if req.BrandColor != nil {
+		v := *req.BrandColor
+		if v == "" {
+			settings.BrandColor = nil
+		} else {
+			settings.BrandColor = &v
+		}
+	}
 	if req.StoreName != "" {
 		settings.StoreName = req.StoreName
 	}
@@ -109,6 +120,7 @@ func (s *SettingsService) DeleteBankAccount(id string) (*dto.SettingsResponse, *
 func (s *SettingsService) toResponse(settings *entity.Settings) *dto.SettingsResponse {
 	resp := &dto.SettingsResponse{
 		ID:           settings.ID,
+		BrandColor:   settings.BrandColor,
 		StoreName:    settings.StoreName,
 		StoreAddress: settings.StoreAddress,
 		StorePhone:   settings.StorePhone,

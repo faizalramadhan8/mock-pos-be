@@ -3,11 +3,11 @@ package handler
 import (
 	"context"
 
-	"github.com/gofiber/fiber/v2"
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
 	"github.com/faizalramadhan/pos-be/internal/application/usecase"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
 	"github.com/faizalramadhan/pos-be/pkg/util"
+	"github.com/gofiber/fiber/v2"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
 )
@@ -56,7 +56,7 @@ func (ctrl *EcomComplaintController) ListForUser(c *fiber.Ctx) error {
 // ListForAdmin — admin lihat semua komplain, filter by status.
 func (ctrl *EcomComplaintController) ListForAdmin(c *fiber.Ctx) error {
 	status := c.Query("status")
-	resp, fail := ctrl.Service.ListForAdmin(status)
+	resp, fail := ctrl.Service.ListForAdmin(status, c.Query("location"))
 	if fail != nil {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
 	}

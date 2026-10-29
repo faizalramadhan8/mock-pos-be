@@ -3,10 +3,10 @@ package usecase
 import (
 	"context"
 
-	"github.com/gofiber/fiber/v2"
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
 	"github.com/faizalramadhan/pos-be/internal/domain/entity"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
+	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
@@ -49,7 +49,10 @@ func (s *EcomCategoryService) List(activeOnly bool) ([]dto.EcomCategoryResponse,
 		Select("ecom_category_id, COUNT(*) as cnt").
 		Where("deleted_at IS NULL AND ecom_category_id IS NOT NULL")
 	if activeOnly {
-		countQ = countQ.Where("location = 'home' AND is_active = 1 AND ecom_is_available = 1 AND stock > 0")
+		// Lintas toko: kategori adalah etalase storefront, yang sekarang
+		// diisi dua toko. Menghitung satu tempat saja membuat angkanya lebih
+		// kecil daripada jumlah barang yang benar-benar tampil.
+		countQ = countQ.Where("is_active = 1 AND ecom_is_available = 1 AND stock > 0")
 	}
 	countQ.Group("ecom_category_id").Scan(&counts)
 	countMap := map[string]int{}
@@ -63,7 +66,7 @@ func (s *EcomCategoryService) List(activeOnly bool) ([]dto.EcomCategoryResponse,
 			ID:           c.ID,
 			Name:         c.Name,
 			NameID:       c.NameID,
-			IconName:    c.IconName,
+			IconName:     c.IconName,
 			SortOrder:    c.SortOrder,
 			IsActive:     c.IsActive,
 			ProductCount: countMap[c.ID],
@@ -80,7 +83,7 @@ func (s *EcomCategoryService) Create(req dto.EcomCategoryRequest) (*dto.EcomCate
 		ID:        uuid.New().String(),
 		Name:      req.Name,
 		NameID:    req.NameID,
-		IconName: req.IconName,
+		IconName:  req.IconName,
 		SortOrder: req.SortOrder,
 		IsActive:  true,
 	}

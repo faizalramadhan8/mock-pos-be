@@ -1,29 +1,29 @@
 package dto
 
 type CreateProductRequest struct {
-	SKU           string   `json:"sku" validate:"required"`
-	Barcode       string   `json:"barcode"`
-	Name          string   `json:"name" validate:"required"`
-	NameID        string   `json:"name_id"`
-	CategoryID    string   `json:"category_id" validate:"required"`
+	SKU        string `json:"sku" validate:"required"`
+	Barcode    string `json:"barcode"`
+	Name       string `json:"name" validate:"required"`
+	NameID     string `json:"name_id"`
+	CategoryID string `json:"category_id" validate:"required"`
 	// EcomCategoryID — kategori ETALASE, yang menentukan produk muncul di
 	// kelompok mana di storefront. Beda dari CategoryID (kategori POS, yang
 	// di toko Bu Santi justru dipakai sebagai pengelompokan pemasok).
-	EcomCategoryID *string `json:"ecom_category_id,omitempty"`
-	SupplierID    *string  `json:"supplier_id,omitempty"`
-	PurchasePrice float64  `json:"purchase_price" validate:"min=0"`
-	SellingPrice  float64  `json:"selling_price" validate:"min=0"`
-	MemberPrice   *float64 `json:"member_price,omitempty"`
-	QtyPerBox     int      `json:"qty_per_box"`
-	Stock         int      `json:"stock"`
+	EcomCategoryID *string  `json:"ecom_category_id,omitempty"`
+	SupplierID     *string  `json:"supplier_id,omitempty"`
+	PurchasePrice  float64  `json:"purchase_price" validate:"min=0"`
+	SellingPrice   float64  `json:"selling_price" validate:"min=0"`
+	MemberPrice    *float64 `json:"member_price,omitempty"`
+	QtyPerBox      int      `json:"qty_per_box"`
+	Stock          int      `json:"stock"`
 	// Location — katalog pemilik produk. Kosong = 'store' (POS Bekasi).
 	// Panel rumah mengirim 'home'. Sengaja TIDAK bisa diubah lewat Update:
 	// memindahkan produk antar katalog = memindahkan stok antar tempat
 	// tanpa jejak, dan itu harus lewat opname di masing-masing tempat.
-	Location      string   `json:"location" validate:"omitempty,oneof=store home"`
-	Unit          string   `json:"unit" validate:"required"`
-	Image         string   `json:"image"`
-	MinStock      int      `json:"min_stock"`
+	Location string `json:"location" validate:"omitempty,oneof=store home"`
+	Unit     string `json:"unit" validate:"required"`
+	Image    string `json:"image"`
+	MinStock int    `json:"min_stock"`
 }
 
 type UpdateProductRequest struct {
@@ -60,25 +60,35 @@ type ProductPriceTierResponse struct {
 	ProductID  string                      `json:"product_id"`
 	MinQty     int                         `json:"min_qty"`
 	Price      float64                     `json:"price"`
-	TargetType string                      `json:"target_type"`        // 'all_customers' | 'member_specific'
+	TargetType string                      `json:"target_type"` // 'all_customers' | 'all_members' | 'member_specific'
 	Note       string                      `json:"note,omitempty"`
 	Members    []ProductPriceTierMemberRef `json:"members,omitempty"` // populated when target_type='member_specific'
-	// ExpiresAt RFC3339 string. NULL = tidak terbatas. Tier dengan
-	// expires_at < NOW di-skip di POS compute.
+	// StartsAt/ExpiresAt RFC3339. Keduanya NULL = berlaku terus sejak dibuat.
+	// Tier di luar jendela ini di-skip SEMUA penghitung harga.
+	StartsAt  *string `json:"starts_at,omitempty"`
 	ExpiresAt *string `json:"expires_at,omitempty"`
 	CreatedAt string  `json:"created_at"`
 }
 
 // SavePriceTierRequest digunakan untuk Create + Update tier (same body).
 // MemberIDs hanya wajib kalau TargetType='member_specific'.
-// DurationDays: opsi durasi tier (1/3/6/12/30 hari). 0 atau omit = tidak
-// terbatas (expires_at = NULL). Server hitung expires_at = NOW + duration.
+//
+// Jadwal berlaku — StartsAt/ExpiresAt menerima "YYYY-MM-DD" atau RFC3339.
+// Kosong = tidak dibatasi di sisi itu. Tanggal polos dibaca di zona WIB:
+// StartsAt jadi 00:00 hari itu, ExpiresAt jadi 00:00 hari BERIKUTNYA supaya
+// "sampai 31 Des" benar-benar mencakup seluruh 31 Desember.
+//
+// DurationDays: cara lama (1/3/6/12/30 hari dari sekarang). Dipertahankan
+// supaya bundel FE yang belum ter-deploy tidak diam-diam kehilangan masa
+// berlakunya; diabaikan kalau ExpiresAt diisi.
 type SavePriceTierRequest struct {
 	MinQty       int      `json:"min_qty" validate:"required,min=1"`
 	Price        float64  `json:"price" validate:"required,min=0"`
-	TargetType   string   `json:"target_type" validate:"required,oneof=all_customers member_specific"`
+	TargetType   string   `json:"target_type" validate:"required,oneof=all_customers all_members member_specific"`
 	MemberIDs    []string `json:"member_ids,omitempty"`
 	Note         string   `json:"note"`
+	StartsAt     *string  `json:"starts_at,omitempty"`
+	ExpiresAt    *string  `json:"expires_at,omitempty"`
 	DurationDays int      `json:"duration_days,omitempty" validate:"omitempty,oneof=1 3 6 12 30"`
 }
 
@@ -93,6 +103,7 @@ type ProductPriceTierHistoryResponse struct {
 	TargetType string   `json:"target_type"`
 	MemberIDs  []string `json:"member_ids,omitempty"`
 	Note       string   `json:"note,omitempty"`
+	StartsAt   *string  `json:"starts_at,omitempty"`
 	ExpiresAt  *string  `json:"expires_at,omitempty"`
 	Status     string   `json:"status"`
 	Action     string   `json:"action"`
@@ -103,28 +114,28 @@ type ProductPriceTierHistoryResponse struct {
 }
 
 type ProductResponse struct {
-	ID            string            `json:"id"`
-	SKU           string            `json:"sku"`
-	Barcode       string            `json:"barcode,omitempty"`
-	Name          string            `json:"name"`
-	NameID        string            `json:"name_id"`
-	CategoryID    string            `json:"category_id"`
-	Category      *CategoryResponse `json:"category,omitempty"`
-	SupplierID    *string           `json:"supplier_id,omitempty"`
-	Supplier      *SupplierResponse `json:"supplier,omitempty"`
-	PurchasePrice float64           `json:"purchase_price"`
-	SellingPrice  float64           `json:"selling_price"`
-	MemberPrice   *float64          `json:"member_price,omitempty"`
-	QtyPerBox     int               `json:"qty_per_box"`
-	Stock         int               `json:"stock"`
-	Location      string            `json:"location"`
-	Unit          string            `json:"unit"`
-	Image         string            `json:"image,omitempty"`
-	MinStock      int               `json:"min_stock"`
-	IsActive      bool              `json:"is_active"`
-	IsRedeemable  bool              `json:"is_redeemable"`
+	ID            string                     `json:"id"`
+	SKU           string                     `json:"sku"`
+	Barcode       string                     `json:"barcode,omitempty"`
+	Name          string                     `json:"name"`
+	NameID        string                     `json:"name_id"`
+	CategoryID    string                     `json:"category_id"`
+	Category      *CategoryResponse          `json:"category,omitempty"`
+	SupplierID    *string                    `json:"supplier_id,omitempty"`
+	Supplier      *SupplierResponse          `json:"supplier,omitempty"`
+	PurchasePrice float64                    `json:"purchase_price"`
+	SellingPrice  float64                    `json:"selling_price"`
+	MemberPrice   *float64                   `json:"member_price,omitempty"`
+	QtyPerBox     int                        `json:"qty_per_box"`
+	Stock         int                        `json:"stock"`
+	Location      string                     `json:"location"`
+	Unit          string                     `json:"unit"`
+	Image         string                     `json:"image,omitempty"`
+	MinStock      int                        `json:"min_stock"`
+	IsActive      bool                       `json:"is_active"`
+	IsRedeemable  bool                       `json:"is_redeemable"`
 	PriceTiers    []ProductPriceTierResponse `json:"price_tiers,omitempty"`
-	CreatedAt     string            `json:"created_at"`
+	CreatedAt     string                     `json:"created_at"`
 }
 
 type CreateCategoryRequest struct {

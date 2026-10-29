@@ -4,9 +4,9 @@ import (
 	"context"
 	"strings"
 
-	"github.com/gofiber/fiber/v2"
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
+	"github.com/gofiber/fiber/v2"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
 )
@@ -27,7 +27,12 @@ func NewEcomAdminCustomersService(ctx context.Context, db *gorm.DB) *EcomAdminCu
 // List — cari + paginate. Search cover nama, email, phone.
 // Sort: created_at DESC default (customer baru dulu). Aggregate order stats
 // via LEFT JOIN supaya customer belum pernah order tetap muncul.
-func (s *EcomAdminCustomersService) List(search string, page, limit int) (*dto.EcomAdminCustomerListResponse, *dto.ApiError) {
+// List — `location` kosong = Gabungan. Yang disaring adalah AGREGAT
+// belanjanya, bukan daftar customernya: orang yang sama bisa belanja di dua
+// toko, dan menghilangkannya dari daftar saat memilih satu toko membuat
+// riwayatnya seolah tidak pernah ada.
+func (s *EcomAdminCustomersService) List(search, location string, page, limit int) (*dto.EcomAdminCustomerListResponse, *dto.ApiError) {
+	sumber := SumberPesananTempat(location)
 	if limit <= 0 || limit > 100 {
 		limit = 25
 	}
@@ -80,9 +85,9 @@ func (s *EcomAdminCustomersService) List(search string, page, limit int) (*dto.E
 			       SUM(CASE WHEN o.status = 'completed' THEN o.total ELSE 0 END) AS total_spent,
 			       DATE_FORMAT(MAX(o.created_at), '%Y-%m-%dT%H:%i:%sZ') AS last_order_date
 			FROM orders o
-			WHERE o.order_source IN ('ecom','home') AND o.deleted_at IS NULL AND o.ecom_user_id IS NOT NULL
+			WHERE o.order_source IN ? AND o.deleted_at IS NULL AND o.ecom_user_id IS NOT NULL
 			GROUP BY o.ecom_user_id
-		) agg ON agg.ecom_user_id = u.id`).
+		) agg ON agg.ecom_user_id = u.id`, sumber).
 		Order("u.created_at DESC").
 		Limit(limit).Offset(offset).
 		Scan(&rows).Error

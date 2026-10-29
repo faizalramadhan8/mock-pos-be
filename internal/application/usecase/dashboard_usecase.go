@@ -3,19 +3,19 @@ package usecase
 import (
 	"context"
 
-	"github.com/gofiber/fiber/v2"
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
 	"github.com/faizalramadhan/pos-be/internal/domain/repository"
+	"github.com/gofiber/fiber/v2"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
 )
 
 type DashboardService struct {
-	Log          *zerolog.Logger
-	OrderRepo    *repository.OrderRepository
-	ProductRepo  *repository.ProductRepository
-	BatchRepo    *repository.StockBatchRepository
+	Log         *zerolog.Logger
+	OrderRepo   *repository.OrderRepository
+	ProductRepo *repository.ProductRepository
+	BatchRepo   *repository.StockBatchRepository
 }
 
 func NewDashboardService(ctx context.Context, db *gorm.DB) *DashboardService {

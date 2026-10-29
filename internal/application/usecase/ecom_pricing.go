@@ -75,7 +75,7 @@ func computeEcomLinePrice(db *gorm.DB, p *entity.Product, qty int) ecomLinePrice
 		if t.MinQty <= 0 || qty < t.MinQty {
 			continue
 		}
-		if t.ExpiresAt != nil && t.ExpiresAt.Before(now) {
+		if !tierSedangBerlaku(t, now) {
 			continue
 		}
 		if best == nil || t.MinQty > best.MinQty || (t.MinQty == best.MinQty && t.Price < best.Price) {

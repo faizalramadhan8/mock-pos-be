@@ -125,7 +125,7 @@ func (ctrl *EcomAdminController) ListActivity(c *fiber.Ctx) error {
 // ============ Sprint 5 Chunk 8 — Analytics (2 Aug 2026) ============
 
 func (ctrl *EcomAdminController) GetAnalytics(c *fiber.Ctx) error {
-	resp, fail := ctrl.EcomAnalyticsSvc.Get()
+	resp, fail := ctrl.EcomAnalyticsSvc.Get(c.Query("location"))
 	if fail != nil {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
 	}
@@ -166,7 +166,9 @@ func (ctrl *EcomAdminController) ListBroadcasts(c *fiber.Ctx) error {
 // ============ Sprint 4 Chunk 5 — Ecom Settings (31 Jul 2026) ============
 
 func (ctrl *EcomAdminController) GetSettings(c *fiber.Ctx) error {
-	resp, fail := ctrl.EcomSettingsSvc.Get()
+	// ?location=home|store. Tanpa parameter = rumah, sama seperti perilaku
+	// sebelum tabelnya dipecah per tempat.
+	resp, fail := ctrl.EcomSettingsSvc.Get(c.Query("location"))
 	if fail != nil {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
 	}
@@ -178,18 +180,25 @@ func (ctrl *EcomAdminController) UpdateSettings(c *fiber.Ctx) error {
 	if err := c.BodyParser(&patch); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(dto.ApiResponse{Code: fiber.StatusBadRequest, Message: "Body tidak valid"})
 	}
-	resp, fail := ctrl.EcomSettingsSvc.Update(patch)
+	loc := usecase.TempatSah(c.Query("location"))
+	resp, fail := ctrl.EcomSettingsSvc.Update(loc, patch)
 	if fail != nil {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
 	}
 	// Audit — cegah dispute "siapa ubah min order jadi Rp X kemarin".
+	// Tempatnya ikut dicatat: dua toko punya pengaturan sendiri, jadi tanpa
+	// itu barisnya tidak bisa dibedakan satu sama lain.
 	if claims, ok := c.Locals("session").(*dto.JWTClaims); ok {
 		keys := make([]string, 0, len(patch))
 		for k := range patch {
 			keys = append(keys, k)
 		}
-		ctrl.EcomActivitySvc.Record(claims.ID, "settings_changed", "settings",
-			"Ubah pengaturan storefront ("+joinKeys(keys)+")", patch)
+		namaTempat := "Online Rumah"
+		if loc == usecase.TempatToko {
+			namaTempat = "Toko Bekasi"
+		}
+		ctrl.EcomActivitySvc.Record(claims.ID, "settings_changed", "settings:"+loc,
+			"Ubah pengaturan "+namaTempat+" ("+joinKeys(keys)+")", patch)
 	}
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "OK", Body: resp})
 }
@@ -251,7 +260,7 @@ func (ctrl *EcomAdminController) ListCustomers(c *fiber.Ctx) error {
 	search := c.Query("search", "")
 	page := c.QueryInt("page", 1)
 	limit := c.QueryInt("limit", 25)
-	resp, fail := ctrl.EcomCustomerSvc.List(search, page, limit)
+	resp, fail := ctrl.EcomCustomerSvc.List(search, c.Query("location"), page, limit)
 	if fail != nil {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{Code: fail.StatusCode.Code, Message: fail.Message})
 	}
@@ -473,7 +482,7 @@ func (ctrl *EcomAdminController) ListOrders(c *fiber.Ctx) error {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	resp, fail := ctrl.EcomOrdersSvc.List(status, search, cursor, limit)
+	resp, fail := ctrl.EcomOrdersSvc.List(status, search, cursor, c.Query("location"), limit)
 	if fail != nil {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
 			Code: fail.StatusCode.Code, Message: fail.StatusCode.Message, Error: fail.Message,
@@ -790,7 +799,6 @@ func (ctrl *EcomAdminController) ListCatalogRefs(c *fiber.Ctx) error {
 		Msg("catalog-refs untuk form produk rumah")
 	return c.JSON(dto.ApiResponse{Code: fiber.StatusOK, Message: "successfully", Body: out})
 }
-
 
 // ─── Harga grosir produk rumah ────────────────────────────────────────────
 //

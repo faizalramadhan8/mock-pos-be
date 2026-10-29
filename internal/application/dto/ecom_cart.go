@@ -9,26 +9,50 @@ type CartItemResponse struct {
 	SKU         string   `json:"sku"`
 	Image       string   `json:"image,omitempty"`
 	Quantity    int      `json:"quantity"`
-	Price       float64  `json:"price"`         // ecom_price fallback selling_price
+	Price       float64  `json:"price"` // ecom_price fallback selling_price
 	MemberPrice *float64 `json:"member_price,omitempty"`
-	Stock       int      `json:"stock"`         // stock_ecom saat ini (untuk validasi)
+	Stock       int      `json:"stock"` // stock_ecom saat ini (untuk validasi)
 	MinOrder    int      `json:"min_order"`
 	WeightGrams *int     `json:"weight_grams,omitempty"`
-	Subtotal    float64  `json:"subtotal"`      // quantity × price
+	Subtotal    float64  `json:"subtotal"` // quantity × price
+	// Location + StoreName — toko asal barang ini. Customer perlu tahu:
+	// ongkirnya dihitung dari sana, dan dua toko berarti dua paket.
+	Location  string `json:"location"`
+	StoreName string `json:"store_name"`
 	// Kalau produk sudah tidak tersedia (dihapus / disabled / stok 0), flag
 	// untuk UI display warning + prevent checkout.
-	Unavailable bool   `json:"unavailable,omitempty"`
+	Unavailable       bool   `json:"unavailable,omitempty"`
 	UnavailableReason string `json:"unavailable_reason,omitempty"`
 }
 
-// CartResponse — full cart dengan total.
+// CartGroup — isi keranjang dari SATU toko.
+//
+// Keranjang boleh campur dua toko, dan tiap toko dikirim dari alamat berbeda
+// dengan ongkirnya sendiri. Jadi layar keranjang mengelompokkannya, dan
+// checkout menghasilkan satu pesanan per kelompok.
+type CartGroup struct {
+	Location  string             `json:"location"` // "home" | "store"
+	StoreName string             `json:"store_name"`
+	Items     []CartItemResponse `json:"items"`
+	Subtotal  float64            `json:"subtotal"`
+	TotalQty  int                `json:"total_qty"`
+	// MinOrderAmount — minimal belanja toko INI. 0 = tanpa batas. Dikirim
+	// supaya keranjang bisa memberi tahu "kurang Rp X lagi" sebelum customer
+	// sampai ke checkout dan ditolak di sana.
+	MinOrderAmount float64 `json:"min_order_amount"`
+}
+
 type CartResponse struct {
-	Items         []CartItemResponse `json:"items"`
-	ItemCount     int                `json:"item_count"`      // total unique products
-	TotalQty      int                `json:"total_qty"`       // sum of quantities
-	Subtotal      float64            `json:"subtotal"`
-	TotalWeight   int                `json:"total_weight_grams"`
-	HasUnavailable bool              `json:"has_unavailable"` // any item unavailable
+	// Items — daftar datar, tetap dipertahankan: isinya tidak berubah artinya
+	// setelah pengelompokan, jadi pemakai lama tidak jadi salah.
+	Items []CartItemResponse `json:"items"`
+	// Groups — satu entri per toko, urut rumah lalu Bekasi.
+	Groups         []CartGroup `json:"groups"`
+	ItemCount      int         `json:"item_count"` // total unique products
+	TotalQty       int         `json:"total_qty"`  // sum of quantities
+	Subtotal       float64     `json:"subtotal"`
+	TotalWeight    int         `json:"total_weight_grams"`
+	HasUnavailable bool        `json:"has_unavailable"` // any item unavailable
 }
 
 // CartAddRequest — add ke cart. Kalau product sudah ada, increment quantity.

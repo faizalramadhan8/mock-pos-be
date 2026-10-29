@@ -37,24 +37,24 @@ type EcomCategory struct {
 func (EcomCategory) TableName() string { return "ecom_categories" }
 
 type Product struct {
-	ID            string         `gorm:"type:varchar(36);primary_key;not null" json:"id"`
-	SKU           string         `gorm:"type:varchar(50);not null;uniqueIndex" json:"sku"`
-	Barcode       string         `gorm:"type:varchar(50);null;index" json:"barcode,omitempty"`
-	Name          string         `gorm:"type:varchar(200);not null" json:"name"`
-	NameID        string         `gorm:"column:name_id;type:varchar(200);not null" json:"name_id"`
-	CategoryID    string         `gorm:"type:varchar(36);not null" json:"category_id"`
-	Category      *Category      `gorm:"foreignKey:CategoryID" json:"category,omitempty"`
-	SupplierID    *string        `gorm:"type:varchar(36);null" json:"supplier_id,omitempty"`
-	Supplier      *Supplier      `gorm:"foreignKey:SupplierID" json:"supplier,omitempty"`
-	PurchasePrice float64        `gorm:"type:decimal(15,2);not null;default:0" json:"purchase_price"`
-	SellingPrice  float64        `gorm:"type:decimal(15,2);not null;default:0" json:"selling_price"`
-	MemberPrice   *float64       `gorm:"type:decimal(15,2);null" json:"member_price,omitempty"`
-	QtyPerBox     int            `gorm:"type:int;not null;default:1" json:"qty_per_box"`
-	Stock         int            `gorm:"type:int;not null;default:0" json:"stock"`
-	Unit          string         `gorm:"type:varchar(20);not null;default:'pcs'" json:"unit"`
-	Image         string         `gorm:"type:text;null" json:"image,omitempty"`
-	MinStock      int            `gorm:"type:int;not null;default:0" json:"min_stock"`
-	IsActive      bool           `gorm:"type:tinyint(1);not null;default:1" json:"is_active"`
+	ID            string    `gorm:"type:varchar(36);primary_key;not null" json:"id"`
+	SKU           string    `gorm:"type:varchar(50);not null;uniqueIndex" json:"sku"`
+	Barcode       string    `gorm:"type:varchar(50);null;index" json:"barcode,omitempty"`
+	Name          string    `gorm:"type:varchar(200);not null" json:"name"`
+	NameID        string    `gorm:"column:name_id;type:varchar(200);not null" json:"name_id"`
+	CategoryID    string    `gorm:"type:varchar(36);not null" json:"category_id"`
+	Category      *Category `gorm:"foreignKey:CategoryID" json:"category,omitempty"`
+	SupplierID    *string   `gorm:"type:varchar(36);null" json:"supplier_id,omitempty"`
+	Supplier      *Supplier `gorm:"foreignKey:SupplierID" json:"supplier,omitempty"`
+	PurchasePrice float64   `gorm:"type:decimal(15,2);not null;default:0" json:"purchase_price"`
+	SellingPrice  float64   `gorm:"type:decimal(15,2);not null;default:0" json:"selling_price"`
+	MemberPrice   *float64  `gorm:"type:decimal(15,2);null" json:"member_price,omitempty"`
+	QtyPerBox     int       `gorm:"type:int;not null;default:1" json:"qty_per_box"`
+	Stock         int       `gorm:"type:int;not null;default:0" json:"stock"`
+	Unit          string    `gorm:"type:varchar(20);not null;default:'pcs'" json:"unit"`
+	Image         string    `gorm:"type:text;null" json:"image,omitempty"`
+	MinStock      int       `gorm:"type:int;not null;default:0" json:"min_stock"`
+	IsActive      bool      `gorm:"type:tinyint(1);not null;default:1" json:"is_active"`
 	// Location — tempat pemilik produk: 'store' (Bekasi) atau 'home' (toko
 	// rumah). Tiap tempat punya katalognya SENDIRI dan tidak melihat katalog
 	// yang lain. Barang yang dijual di dua tempat = dua baris produk.
@@ -62,11 +62,11 @@ type Product struct {
 	// Penyaring paling menentukan ada di scan barcode POS: pencariannya
 	// mengambil yang pertama cocok, jadi tanpa penyaring ini kasir bisa
 	// menjual barang yang fisiknya ada di rumah.
-	Location      string         `gorm:"type:varchar(10);not null;default:'store'" json:"location"`
+	Location string `gorm:"type:varchar(10);not null;default:'store'" json:"location"`
 	// IsRedeemable: TRUE = produk masuk katalog tebus poin. Admin tandai
 	// via halaman "Katalog Tebus Poin" di Stok. Default FALSE — semua
 	// produk existing tidak eligible sampai di-curate.
-	IsRedeemable  bool           `gorm:"column:is_redeemable;type:tinyint(1);not null;default:0" json:"is_redeemable"`
+	IsRedeemable bool `gorm:"column:is_redeemable;type:tinyint(1);not null;default:0" json:"is_redeemable"`
 	// E-commerce fields (migration 000047, Bu Santi 20 Jul 2026).
 	// Channel separation dengan POS: stok dan harga BEDA. NULL price = fallback
 	// ke selling_price/member_price. ecom_is_available = flag publish visible
@@ -81,13 +81,13 @@ type Product struct {
 	// tampil ecom_image saja. Format simpan: `["/storage/x.jpg","/storage/y.jpg"]`.
 	// Simpan sebagai datatypes.JSON supaya GORM handle marshal/unmarshal.
 	EcomImages      datatypes.JSON `gorm:"column:ecom_images;type:json;null" json:"ecom_images,omitempty"`
-	EcomCategoryID  *string       `gorm:"column:ecom_category_id;type:varchar(36);null" json:"ecom_category_id,omitempty"`
-	EcomCategory    *EcomCategory `gorm:"foreignKey:EcomCategoryID" json:"ecom_category,omitempty"`
-	EcomWeightGrams *int     `gorm:"column:ecom_weight_grams;type:int;null" json:"ecom_weight_grams,omitempty"`
-	EcomMinOrder    int      `gorm:"column:ecom_min_order;type:int;not null;default:1" json:"ecom_min_order"`
-	CreatedAt     time.Time      `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
-	UpdatedAt     time.Time      `gorm:"default:current_timestamp()" json:"updated_at,omitempty"`
-	DeletedAt     gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
+	EcomCategoryID  *string        `gorm:"column:ecom_category_id;type:varchar(36);null" json:"ecom_category_id,omitempty"`
+	EcomCategory    *EcomCategory  `gorm:"foreignKey:EcomCategoryID" json:"ecom_category,omitempty"`
+	EcomWeightGrams *int           `gorm:"column:ecom_weight_grams;type:int;null" json:"ecom_weight_grams,omitempty"`
+	EcomMinOrder    int            `gorm:"column:ecom_min_order;type:int;not null;default:1" json:"ecom_min_order"`
+	CreatedAt       time.Time      `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
+	UpdatedAt       time.Time      `gorm:"default:current_timestamp()" json:"updated_at,omitempty"`
+	DeletedAt       gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
 }
 
 func (Product) TableName() string { return "products" }
@@ -100,16 +100,27 @@ func (Product) TableName() string { return "products" }
 // (qty × qty_per_box) sebelum compare. price = harga per satuan juga (bukan
 // per dus) — konsisten dengan member_price/selling_price baseline.
 type ProductPriceTier struct {
-	ID         string     `gorm:"type:varchar(36);primary_key;not null" json:"id"`
-	ProductID  string     `gorm:"column:product_id;type:varchar(36);not null" json:"product_id"`
-	MinQty     int        `gorm:"column:min_qty;type:int;not null" json:"min_qty"`
-	Price      float64    `gorm:"type:decimal(15,2);not null" json:"price"`
-	TargetType string     `gorm:"column:target_type;type:varchar(20);not null" json:"target_type"` // 'all_customers' | 'member_specific'
-	Note       string     `gorm:"type:varchar(200);null" json:"note,omitempty"`
+	ID        string  `gorm:"type:varchar(36);primary_key;not null" json:"id"`
+	ProductID string  `gorm:"column:product_id;type:varchar(36);not null" json:"product_id"`
+	MinQty    int     `gorm:"column:min_qty;type:int;not null" json:"min_qty"`
+	Price     float64 `gorm:"type:decimal(15,2);not null" json:"price"`
+	// TargetType: 'all_customers' | 'all_members' | 'member_specific'.
+	//   all_customers   — siapa saja, termasuk walk-in tanpa kartu member.
+	//   all_members     — semua member terdaftar, tapi bukan walk-in.
+	//   member_specific — hanya member di whitelist (lihat Members).
+	// 'all_members' sempat dihapus 20 Jun 2026 (di-rename jadi all_customers)
+	// lalu diminta kembali oleh Bu Santi 30 Okt 2026 sebagai pilihan KETIGA —
+	// dia butuh keduanya: ada promo untuk umum, ada yang khusus member.
+	TargetType string `gorm:"column:target_type;type:varchar(20);not null" json:"target_type"`
+	Note       string `gorm:"type:varchar(200);null" json:"note,omitempty"`
+	// StartsAt: tier belum berlaku sebelum waktu ini. NULL = berlaku sejak
+	// dibuat. Ditambah 30 Okt 2026 (migration 000079) supaya promo bulan depan
+	// bisa dipasang dari sekarang. Semua penghitung harga melewati tier yang
+	// belum mulai, dan storefront tidak menerimanya sama sekali.
+	StartsAt *time.Time `gorm:"column:starts_at;type:datetime;null;index" json:"starts_at,omitempty"`
 	// ExpiresAt: tier auto-balik ke harga normal setelah ini. NULL = tidak
-	// terbatas. Per request Bu Santi 21 Jun 2026 — durasi opt-in (1/3/6/12/30
-	// hari) untuk promo terbatas. POS compute skip tier dengan expires_at <
-	// NOW. Lihat migration 000042.
+	// terbatas. Per request Bu Santi 21 Jun 2026 untuk promo terbatas.
+	// Lihat migration 000042.
 	ExpiresAt *time.Time `gorm:"column:expires_at;type:datetime;null;index" json:"expires_at,omitempty"`
 	CreatedAt time.Time  `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
 	UpdatedAt time.Time  `gorm:"default:current_timestamp()" json:"updated_at,omitempty"`
@@ -137,20 +148,22 @@ func (Supplier) TableName() string { return "suppliers" }
 // ProductPriceHistory keeps an append-only log of every price change for a
 // product. Reports that need historical accuracy (profit, sales by tier) can
 // look up the price active at a given timestamp via:
-//   start_date <= t AND (end_date IS NULL OR end_date > t)
+//
+//	start_date <= t AND (end_date IS NULL OR end_date > t)
+//
 // price_type values: "regular" | "member" | "purchase".
 // status values:     "active"  | "inactive".
 type ProductPriceHistory struct {
-	ID         string     `gorm:"type:varchar(36);primary_key;not null" json:"id"`
-	ProductID  string     `gorm:"type:varchar(36);not null;index" json:"product_id"`
-	PriceType  string     `gorm:"type:varchar(20);not null" json:"price_type"`
-	Price      float64    `gorm:"type:decimal(15,2);not null;default:0" json:"price"`
-	Status     string     `gorm:"type:varchar(20);not null;default:'active'" json:"status"`
-	StartDate  time.Time  `gorm:"not null;default:current_timestamp()" json:"start_date"`
-	EndDate    *time.Time `gorm:"null" json:"end_date,omitempty"`
-	ChangedBy  *string    `gorm:"type:varchar(36);null" json:"changed_by,omitempty"`
-	Note       string     `gorm:"type:varchar(255);null" json:"note,omitempty"`
-	CreatedAt  time.Time  `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
+	ID        string     `gorm:"type:varchar(36);primary_key;not null" json:"id"`
+	ProductID string     `gorm:"type:varchar(36);not null;index" json:"product_id"`
+	PriceType string     `gorm:"type:varchar(20);not null" json:"price_type"`
+	Price     float64    `gorm:"type:decimal(15,2);not null;default:0" json:"price"`
+	Status    string     `gorm:"type:varchar(20);not null;default:'active'" json:"status"`
+	StartDate time.Time  `gorm:"not null;default:current_timestamp()" json:"start_date"`
+	EndDate   *time.Time `gorm:"null" json:"end_date,omitempty"`
+	ChangedBy *string    `gorm:"type:varchar(36);null" json:"changed_by,omitempty"`
+	Note      string     `gorm:"type:varchar(255);null" json:"note,omitempty"`
+	CreatedAt time.Time  `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
 }
 
 func (ProductPriceHistory) TableName() string { return "product_price_history" }
@@ -172,13 +185,16 @@ type ProductPriceTierHistory struct {
 	TargetType string         `gorm:"type:varchar(20);not null" json:"target_type"`
 	MemberIDs  datatypes.JSON `gorm:"type:json;null" json:"member_ids,omitempty"`
 	Note       string         `gorm:"type:varchar(200);null" json:"note,omitempty"`
-	ExpiresAt  *time.Time     `gorm:"column:expires_at;type:datetime;null" json:"expires_at,omitempty"`
-	Status     string         `gorm:"type:varchar(20);not null;default:'active';index" json:"status"`
-	Action     string         `gorm:"type:varchar(20);not null" json:"action"`
-	StartDate  time.Time      `gorm:"not null;default:current_timestamp()" json:"start_date"`
-	EndDate    *time.Time     `gorm:"null" json:"end_date,omitempty"`
-	ChangedBy  *string        `gorm:"type:varchar(36);null" json:"changed_by,omitempty"`
-	CreatedAt  time.Time      `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
+	// StartsAt/ExpiresAt = jadwal TIER-nya. Jangan tertukar dengan StartDate/
+	// EndDate di bawah, yang menandai masa berlaku BARIS AUDIT ini.
+	StartsAt  *time.Time `gorm:"column:starts_at;type:datetime;null" json:"starts_at,omitempty"`
+	ExpiresAt *time.Time `gorm:"column:expires_at;type:datetime;null" json:"expires_at,omitempty"`
+	Status    string     `gorm:"type:varchar(20);not null;default:'active';index" json:"status"`
+	Action    string     `gorm:"type:varchar(20);not null" json:"action"`
+	StartDate time.Time  `gorm:"not null;default:current_timestamp()" json:"start_date"`
+	EndDate   *time.Time `gorm:"null" json:"end_date,omitempty"`
+	ChangedBy *string    `gorm:"type:varchar(36);null" json:"changed_by,omitempty"`
+	CreatedAt time.Time  `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
 }
 
 func (ProductPriceTierHistory) TableName() string { return "product_price_tier_history" }

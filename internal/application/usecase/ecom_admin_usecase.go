@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
 	"github.com/faizalramadhan/pos-be/internal/domain/entity"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
+	"github.com/gofiber/fiber/v2"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
 )
@@ -281,25 +281,25 @@ func toEcomAdminProductResponse(p *entity.Product) dto.EcomAdminProductResponse 
 		}
 	}
 	return dto.EcomAdminProductResponse{
-		ID:                p.ID,
-		Name:              p.Name,
-		NameID:            p.NameID,
-		SKU:               p.SKU,
-		StockPOS:          p.Stock,
-		SellingPrice:      p.SellingPrice,
-		MemberPrice:       p.MemberPrice,
-		StockEcom:         p.Stock,
-		EcomPrice:         p.EcomPrice,
-		EcomMemberPrice:   p.EcomMemberPrice,
-		EcomIsAvailable:   p.EcomIsAvailable,
-		EcomDescription:   p.EcomDescription,
-		EcomImage:         p.EcomImage,
-		EcomImages:        decodeEcomImages(p.EcomImages),
-		EcomCategoryID:    p.EcomCategoryID,
-		EcomCategoryName:  catName,
-		EcomWeightGrams:   p.EcomWeightGrams,
-		EcomMinOrder:      p.EcomMinOrder,
-		Image:             p.Image,
+		ID:               p.ID,
+		Name:             p.Name,
+		NameID:           p.NameID,
+		SKU:              p.SKU,
+		StockPOS:         p.Stock,
+		SellingPrice:     p.SellingPrice,
+		MemberPrice:      p.MemberPrice,
+		StockEcom:        p.Stock,
+		EcomPrice:        p.EcomPrice,
+		EcomMemberPrice:  p.EcomMemberPrice,
+		EcomIsAvailable:  p.EcomIsAvailable,
+		EcomDescription:  p.EcomDescription,
+		EcomImage:        p.EcomImage,
+		EcomImages:       decodeEcomImages(p.EcomImages),
+		EcomCategoryID:   p.EcomCategoryID,
+		EcomCategoryName: catName,
+		EcomWeightGrams:  p.EcomWeightGrams,
+		EcomMinOrder:     p.EcomMinOrder,
+		Image:            p.Image,
 	}
 }
 

@@ -1,27 +1,27 @@
 package entity
 
 import (
-	"time"
 	"gorm.io/gorm"
+	"time"
 )
 
 type Member struct {
-	ID           string         `gorm:"type:varchar(36);primary_key;not null" json:"id"`
-	Name         string         `gorm:"type:varchar(200);not null" json:"name"`
-	Phone        string         `gorm:"type:varchar(20);not null" json:"phone"`
-	Address      string         `gorm:"type:text;null" json:"address,omitempty"`
+	ID      string `gorm:"type:varchar(36);primary_key;not null" json:"id"`
+	Name    string `gorm:"type:varchar(200);not null" json:"name"`
+	Phone   string `gorm:"type:varchar(20);not null" json:"phone"`
+	Address string `gorm:"type:text;null" json:"address,omitempty"`
 	// MemberNumber is a pointer so NULL-when-empty plays well with MySQL's
 	// UNIQUE constraint — multiple NULLs are allowed, but multiple empty
 	// strings are not. The kasir "Tambah Member" form does not require a
 	// number, so most members hit this path.
-	MemberNumber *string        `gorm:"column:member_number;type:varchar(50);null;uniqueIndex" json:"member_number,omitempty"`
+	MemberNumber *string `gorm:"column:member_number;type:varchar(50);null;uniqueIndex" json:"member_number,omitempty"`
 	// Points: loyalty balance. Earn = (cash_total / 100_000) * 1000 kalau
 	// cash_total tepat kelipatan 100k. Redeem = per-item "tebus" di cart.
 	// Reset 0 setiap 1 Januari (cron).
-	Points       int            `gorm:"type:int;not null;default:0" json:"points"`
-	CreatedAt    time.Time      `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
-	UpdatedAt    time.Time      `gorm:"default:current_timestamp()" json:"updated_at,omitempty"`
-	DeletedAt    gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
+	Points    int            `gorm:"type:int;not null;default:0" json:"points"`
+	CreatedAt time.Time      `gorm:"default:current_timestamp()" json:"created_at,omitempty"`
+	UpdatedAt time.Time      `gorm:"default:current_timestamp()" json:"updated_at,omitempty"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
 }
 
 func (Member) TableName() string { return "members" }
@@ -74,10 +74,14 @@ type AuditEntry struct {
 func (AuditEntry) TableName() string { return "audit_entries" }
 
 type Settings struct {
-	ID           string        `gorm:"type:varchar(36);primary_key;not null" json:"id"`
-	StoreName    string        `gorm:"type:varchar(200);not null;default:'Bakeshop'" json:"store_name"`
-	StoreAddress string        `gorm:"type:text;null" json:"store_address,omitempty"`
-	StorePhone   string        `gorm:"type:varchar(20);null" json:"store_phone,omitempty"`
+	ID           string `gorm:"type:varchar(36);primary_key;not null" json:"id"`
+	StoreName    string `gorm:"type:varchar(200);not null;default:'Bakeshop'" json:"store_name"`
+	StoreAddress string `gorm:"type:text;null" json:"store_address,omitempty"`
+	StorePhone   string `gorm:"type:varchar(20);null" json:"store_phone,omitempty"`
+	// BrandColor — nama palet warna POS ("biru", "hijau", "ungu", "jingga").
+	// Kosong = merah muda bawaan. Di server, bukan di browser, supaya tablet
+	// kasir dan laptop Bu Santi menampilkan warna yang sama.
+	BrandColor   *string       `gorm:"column:brand_color;type:varchar(20);null" json:"brand_color,omitempty"`
 	PPNRate      float64       `gorm:"column:ppn_rate;type:decimal(5,2);not null;default:11" json:"ppn_rate"`
 	LabelWidth   int           `gorm:"column:label_width;type:int;not null;default:40" json:"label_width"`
 	LabelHeight  int           `gorm:"column:label_height;type:int;not null;default:30" json:"label_height"`
@@ -89,8 +93,8 @@ type Settings struct {
 func (Settings) TableName() string { return "settings" }
 
 type BankAccount struct {
-	ID            string    `gorm:"type:varchar(36);primary_key;not null" json:"id"`
-	SettingsID    string    `gorm:"type:varchar(36);not null" json:"settings_id"`
+	ID         string `gorm:"type:varchar(36);primary_key;not null" json:"id"`
+	SettingsID string `gorm:"type:varchar(36);not null" json:"settings_id"`
 	// Location — rekening ini milik tempat mana: 'store' (Bekasi) atau
 	// 'home'. Storefront rumah HANYA menampilkan rekening 'home'; kalau
 	// semua ditampilkan, sebagian customer transfer ke rekening Bekasi dan

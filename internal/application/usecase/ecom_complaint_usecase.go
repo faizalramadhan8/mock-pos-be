@@ -3,13 +3,14 @@ package usecase
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
 	"github.com/faizalramadhan/pos-be/internal/domain/entity"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
+	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
 )
@@ -115,10 +116,16 @@ func (s *EcomComplaintService) ListForUser(userID string) ([]dto.ComplaintRespon
 
 // ListForAdmin — semua komplain (dengan join user untuk display name).
 // Filter status opsional.
-func (s *EcomComplaintService) ListForAdmin(status string) ([]dto.ComplaintResponse, *dto.ApiError) {
+// ListForAdmin — `location` kosong = Gabungan. Komplain tidak punya kolom
+// tempat sendiri; tempatnya menempel pada pesanannya.
+func (s *EcomComplaintService) ListForAdmin(status, location string) ([]dto.ComplaintResponse, *dto.ApiError) {
 	q := s.DB.Model(&entity.EcomComplaint{})
 	if status != "" && status != "all" {
 		q = q.Where("status = ?", status)
+	}
+	if loc := strings.TrimSpace(location); loc != "" {
+		q = q.Where("order_id IN (SELECT id FROM orders WHERE order_source IN ? AND deleted_at IS NULL)",
+			SumberPesananTempat(loc))
 	}
 	var rows []entity.EcomComplaint
 	if err := q.Order("created_at DESC").Find(&rows).Error; err != nil {

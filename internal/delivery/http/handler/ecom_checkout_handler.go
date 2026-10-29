@@ -4,10 +4,10 @@ import (
 	"context"
 	"strings"
 
-	"github.com/gofiber/fiber/v2"
 	"github.com/faizalramadhan/pos-be/internal/application/dto"
 	"github.com/faizalramadhan/pos-be/internal/application/usecase"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
+	"github.com/gofiber/fiber/v2"
 	// Midtrans deprecated 28 Jul 2026 — kode di-preserve untuk rollback path.
 	// "github.com/faizalramadhan/pos-be/internal/infrastructure/midtrans"
 	"github.com/faizalramadhan/pos-be/internal/infrastructure/pg"
@@ -51,14 +51,17 @@ func (ctrl *EcomCheckoutController) ValidateVoucher(c *fiber.Ctx) error {
 		})
 	}
 	claims := c.Locals("session").(*dto.JWTClaims)
-	// Fetch cart subtotal via Shipping.getRates? Simpler: read cart directly.
-	subtotal, ferr := ctrl.Checkout.CartSubtotal(claims.ID, nil)
+	// Subtotal dihitung server-side dari keranjang, dan HANYA dari toko yang
+	// kodenya dipakai — kalau dihitung dari seluruh keranjang, voucher rumah
+	// bisa lolos syarat minimum berkat barang Bekasi.
+	loc := usecase.TempatSah(req.Location)
+	subtotal, ferr := ctrl.Checkout.CartSubtotal(claims.ID, req.SelectedItemIDs, loc)
 	if ferr != nil {
 		return c.Status(ferr.StatusCode.Code).JSON(dto.ApiResponse{
 			Code: ferr.StatusCode.Code, Message: ferr.StatusCode.Message, Error: ferr.Message,
 		})
 	}
-	resp, fail := ctrl.Voucher.Validate(req.Code, subtotal)
+	resp, fail := ctrl.Voucher.Validate(req.Code, subtotal, loc)
 	if fail != nil {
 		return c.Status(fail.StatusCode.Code).JSON(dto.ApiResponse{
 			Code: fail.StatusCode.Code, Message: fail.Message,

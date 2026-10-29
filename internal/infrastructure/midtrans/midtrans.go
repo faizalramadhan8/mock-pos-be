@@ -136,6 +136,7 @@ func (c *Client) CreateSnapToken(req SnapRequest) (*SnapResponse, error) {
 // Return true kalau:
 //   - Client belum configured (stub mode) — dev mode auto-pass
 //   - Signature match
+//
 // Return false kalau live mode dan hash tidak match (potensi spoofing).
 func (c *Client) VerifySignature(orderID, statusCode, grossAmount, signature string) bool {
 	if !c.IsConfigured() {

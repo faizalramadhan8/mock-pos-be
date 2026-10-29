@@ -6,9 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/faizalramadhan/pos-be/internal/application/usecase"
 	"github.com/faizalramadhan/pos-be/internal/domain/entity"
 	"github.com/faizalramadhan/pos-be/internal/domain/enum"
+	"github.com/gofiber/fiber/v2"
 	"github.com/rs/zerolog"
 	"gorm.io/gorm"
 )
@@ -51,7 +52,10 @@ func (ctrl *SitemapController) Sitemap(c *fiber.Ctx) error {
 	// Produk yang tayang di storefront (aktif + stock > 0 + ecom_is_available).
 	var products []entity.Product
 	ctrl.DB.Select("id, updated_at").
-		Where("location = 'home' AND deleted_at IS NULL AND is_active = 1 AND ecom_is_available = 1 AND stock > 0").
+		// Lintas toko, tapi hanya toko yang SEDANG TAYANG — kalau tidak,
+		// mesin pencari mengindeks halaman produk yang dijawab 404.
+		Where("deleted_at IS NULL AND is_active = 1 AND ecom_is_available = 1 AND stock > 0 AND location IN ?",
+			usecase.TempatTayang(ctrl.DB)).
 		Find(&products)
 	for _, p := range products {
 		addURL(&b, base+"/shop/produk/"+p.ID, "weekly", "0.6", p.UpdatedAt)
