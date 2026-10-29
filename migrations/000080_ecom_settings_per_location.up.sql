@@ -27,10 +27,14 @@ CREATE UNIQUE INDEX idx_ecom_settings_location ON ecom_settings(location);
 -- BITESHIP_ORIGIN_* yang isinya alamat rumah. Panel admin memperingatkan
 -- ini dengan jelas; jangan menyalin alamat rumah ke sini sebagai "sementara",
 -- karena ongkir yang dihitung dari alamat salah tidak pernah terlihat salah.
-INSERT INTO ecom_settings (id, location, store_name, min_order_amount,
-                           payment_pg_enabled, payment_manual_enabled,
-                           notif_order_email_enabled)
+-- INSERT IGNORE, bukan ON DUPLICATE KEY UPDATE: sumber dan tujuannya tabel
+-- yang sama, jadi `ON DUPLICATE KEY UPDATE id = id` membuat MySQL menolak
+-- dengan "Column 'id' in field list is ambiguous" — dia tidak tahu `id` yang
+-- mana. INSERT IGNORE memberi sifat idempoten yang sama tanpa menyebut kolom.
+-- Alias `s` dipakai supaya kolom di SELECT juga tidak ambigu.
+INSERT IGNORE INTO ecom_settings (id, location, store_name, min_order_amount,
+                                  payment_pg_enabled, payment_manual_enabled,
+                                  notif_order_email_enabled)
 SELECT 'store', 'store', 'Toko Bahan Kue Santi', 0,
-       payment_pg_enabled, payment_manual_enabled, notif_order_email_enabled
-FROM ecom_settings WHERE id = 'default'
-ON DUPLICATE KEY UPDATE id = id;
+       s.payment_pg_enabled, s.payment_manual_enabled, s.notif_order_email_enabled
+FROM ecom_settings s WHERE s.id = 'default';
